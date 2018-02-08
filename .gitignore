@@ -1,0 +1,13 @@
+
+### bundle related files
+/vendor/*
+/.bundle/*
+# Gemfile.lock
+
+### "old" directory
+*/old/
+
+### file cache
+*.swp
+*~
+.nfs*

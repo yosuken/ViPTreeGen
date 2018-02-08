@@ -1,0 +1,281 @@
+#!/bin/bash
+#
+#  ViPTreeGen - a command line tool for viral proteomic tree generation
+#
+#    Copyright: 2017 (C) Yosuke Nishimura (yosuke@kuicr.kyoto-u.ac.jp)
+#    License: MIT license
+#    Initial version: 2017-02-07
+#
+
+PROGNAME=$(basename $0)
+VERSION="1.0"
+PROGNAMEc="[35m$PROGNAME[0m"
+Errmsg="[31m[error][0m"
+Sccmsg="[31m[error][0m"
+Moddate="2017-02-07"
+
+
+# {{{ usage
+read -r -d '' usage <<EOF
+[35m### $PROGNAME ver $VERSION ($Moddate) ###[0m
+
+[32m[description][0m
+$PROGNAME - a command line tool for viral proteomic tree generation from a FASTA file of (genomic) sequences.
+$PROGNAME is a part of the ViPTree server project (http://www.genome.jp/viptree).
+
+If you use many sequences (e.g. >100) or large sequences (e.g. NCLDV genomes), it may take a long time.
+In those cases, use '--ncpus' or '--queue' for parallel computating.
+
+[32m[usage][0m
+$ $PROGNAME <input fasta> <output dir> [options]
+
+[32m[dependencies][0m
+    - tblastx              -- included in the BLAST+ program;
+                              https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download
+    - ruby (ver >=2.0) 
+
+  (for tree generation)
+    - R (ver >=3.0)
+    - R package 'ape'      -- try install.packages('ape') in R terminal
+    - R package 'phangorn' -- try install.packages('phangorn') in R terminal
+
+[32m[options][0m
+  (general)
+    -h, --help
+    -v, --version
+
+  (tblastx)
+    --cutlen       [>=10000]   (default: 100000)    -- length to split input seqs for speed up calculation
+    --dbsize       [int]       (default: 200000000)
+    --matrix       [str]       (default: BLOSUM45)
+    --evalue       [num]       (default: 1e-2)
+    --min-idt      [int]       (default: 30)
+    --min-aalen    [int]       (default: 30)
+
+  (tree)
+    --notree                   (default: off)       -- generate only similarity/distance matrix
+    --method       [nj|bionj]  (default: bionj)     -- proteomic tree generation method
+
+  (use GNU parallel)
+    --ncpus        [int]                            -- number of jobs in parallel	
+
+  (for icr user)                                    -- for computation in the ICR supercomputer system
+    --queue        [JP1]                            -- queue for computation
+
+[32m[output files][0m
+result/all.sim.matrix              -- similarity (SG score) matrix
+result/all.dist.matrix             -- distance (1-SG score) matrix
+result/all.[bio]nj.[a|de]sc.newick -- Newick files of the viral proteomic tree, midpoint rooted and ladderized
+                                      asc: nodes with fewer children sort before nodes with more children.
+                                      desc: nodes with more children sorting before nodes with fewer children.
+EOF
+# }}} usage
+
+
+# {{{ parse command line
+for OPT in "$@"
+do
+	case "$OPT" in
+		'-h'|'--help' )
+			echo "$usage"
+			exit 1
+			;;
+		'-v'|'--version' )
+			echo $VERSION
+			exit 1
+			;;
+		'--notree' )
+			notree=true
+			shift 1
+			;;
+		'--cutlen' )
+			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
+				echo "$Errmsg option requires an argument -- $1" 1>&2
+				exit 1
+			fi
+			cutlen="$2"
+			shift 2
+			;;
+		'--dbsize' )
+			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
+				echo "$Errmsg option requires an argument -- $1" 1>&2
+				exit 1
+			fi
+			dbsize="$2"
+			shift 2
+			;;
+		'--matrix' )
+			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
+				echo "$Errmsg option requires an argument -- $1" 1>&2
+				exit 1
+			fi
+			matrix="$2"
+			shift 2
+			;;
+		'--evalue' )
+			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
+				echo "$Errmsg option requires an argument -- $1" 1>&2
+				exit 1
+			fi
+			evalue="$2"
+			shift 2
+			;;
+		'--min-idt' )
+			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
+				echo "$Errmsg option requires an argument -- $1" 1>&2
+				exit 1
+			fi
+			idt="$2"
+			shift 2
+			;;
+		'--min-aalen' )
+			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
+				echo "$Errmsg option requires an argument -- $1" 1>&2
+				exit 1
+			fi
+			aalen="$2"
+			shift 2
+			;;
+		'--method' )
+			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
+				echo "$Errmsg option requires an argument -- $1" 1>&2
+				exit 1
+			fi
+			method="$2"
+			shift 2
+			;;
+		'--queue' )
+			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
+				echo "$Errmsg option requires an argument -- $1" 1>&2
+				exit 1
+			fi
+			queue="$2"
+			shift 2
+			;;
+		'--ncpus' )
+			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
+				echo "$Errmsg option requires an argument -- $1" 1>&2
+				exit 1
+			fi
+			ncpus="$2"
+			shift 2
+			;;
+		'--wtime' )
+			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
+				echo "$Errmsg option requires an argument -- $1" 1>&2
+				exit 1
+			fi
+			wtime="$2"
+			shift 2
+			;;
+		'--'|'-' )
+			shift 1
+			params+=( "$@" )
+			break
+			;;
+		-*)
+			echo "$Errmsg illegal option -- '$(echo $1 | sed 's/^-*//')'" 1>&2
+			exit 1
+			;;
+		*)
+			if [[ ! -z "$1" ]] && [[ ! "$1" =~ ^-+ ]] ; then
+				#params=( ${params[@]} "$1" )
+				params+=( "$1" )
+				shift 1
+			fi
+			;;
+	esac
+done
+if [ -z $params ] || [ ${#params[@]} -lt 2 ] ; then
+	echo "$Errmsg need 2 arguments" 1>&2
+	echo 
+	echo "$usage" 1>&2
+	exit 1
+elif ! [ -f "${params[0]}" ] ; then
+	echo "$Errmsg  first argument should be a fasta file." 1>&2
+	echo 
+	echo "$usage" 1>&2
+	exit 1
+elif [ -e "${params[1]}" ] ; then
+	echo "$Errmsg  output directory is already exist." 1>&2
+	echo 
+	echo "$usage" 1>&2
+	exit 1
+fi
+# }}} parse command line
+
+
+# {{{ check dependencies
+### check availablity of tblastx
+command -v tblastx >/dev/null 2>&1 || { echo >&2 "$Errmsg tblastx is required but not available.  Aborting."; exit 1; }
+
+### check availablity of R and ape
+if [ -z $notree ]; then 
+	command -v R >/dev/null 2>&1 || \
+		{ echo >&2 "$Errmsg R is required but not available.  Aborting."; exit 1; }
+	R --no-save --no-restore -e "library('ape')" >/dev/null 2>&1 || \
+		{ echo >&2 "$Errmsg R package 'ape' must be installed but not available.  Aborting."; exit 1; }
+	R --no-save --no-restore -e "library('phangorn')" >/dev/null 2>&1 || \
+		{ echo >&2 "$Errmsg R package 'phangorn' must be installed but not available.  Aborting."; exit 1; }
+fi
+
+### check ruby version
+ST=`ruby -e 'print RUBY_VERSION.to_f >= 2.0 ? 0 : 1'`
+if [ $ST -ne 0 ]; then 
+	echo >&2 "$Errmsg ruby (version >=2.0) is required.  Aborting."; exit 1;
+fi
+
+### check availablity of GNU parallel
+if [ -n $ncpus ]; then 
+	command -v parallel >/dev/null 2>&1 || { echo >&2 "$Errmsg GNU parallel is required but not available.  Aborting."; exit 1; }
+fi
+# }}} check dependencies
+
+
+# {{{ assign variables 
+### parse args
+fin="${params[0]}"
+dir="${params[1]}"
+
+### param for split length for fast up
+cutlen="${cutlen:-100000}"
+
+### tblastx params
+dbsize="${dbsize:-200000000}"
+matrix="${matrix:-BLOSUM45}"
+evalue="${evalue:-1e-2}"
+idt="${idt:-30}"
+aalen="${aalen:-30}"
+
+### tree calculation param
+method="${method:-bionj}"
+
+### computation params
+queue="${queue}"
+nthread="${nthread:-1}"
+wtime="${wtime:-24:00:00}"
+
+### rakefile/logdir
+pushd `dirname $0` > /dev/null
+scrdir=`pwd -P`
+popd > /dev/null
+jobname=`basename $0`
+rakefile=$scrdir/$jobname.rake
+logdir=$dir/log
+# }}} assign variables 
+
+
+### run
+mkdir -p $logdir
+if [ -d $logdir ]; then
+	rake -f $rakefile dir="$dir" fin="$fin" cutlen="$cutlen" dbsize="$dbsize" matrix="$matrix" evalue="$evalue" idt="$idt" aalen="$aalen" \
+		method="$method" queue="$queue" ncpus="$ncpus" wtime="$wtime" notree="$notree" 2>&1 |tee $logdir/$jobname.log
+fi
+
+### after run
+if [[ "${PIPESTATUS[0]}" -gt 0 ]] || [[ "${PIPESTATUS[1]}" -gt 0 ]] ; then 
+	echo "$Errmsg calculation failed: $(LC_ALL=C date +'%Y-%m-%d %H:%M:%S %z')" > $logdir/error
+	exit 1
+else
+	echo "$Sccmsg calculation finished: $(LC_ALL=C date +'%Y-%m-%d %H:%M:%S %z')" > $logdir/success
+fi
