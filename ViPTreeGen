@@ -8,11 +8,11 @@
 #
 
 PROGNAME=$(basename $0)
-VERSION="1.0"
+VERSION="1.0.1"
 PROGNAMEc="[35m$PROGNAME[0m"
 Errmsg="[31m[error][0m"
 Sccmsg="[31m[error][0m"
-Moddate="2017-02-07"
+Moddate="2018-02-08"
 
 
 # {{{ usage

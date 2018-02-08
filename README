@@ -1,13 +1,14 @@
 ###
 ### ViPTreeGen ver 1.0 (2017-02-07)
-### a command line tool for Viral Proteomic Tree (ViPTree) generation from a FASTA file of (genomic) sequences.
+### a command line tool for Viral Proteomic Tree (ViPTree) generation
+### from a FASTA file of (genomic) sequences.
 ###
 ### Copyright: 2017 (C) Yosuke Nishimura (yosuke@kuicr.kyoto-u.ac.jp)
 ### Licence: MIT license
 ###
 
 [description]
-ViPTreeGen - a command line tool for viral proteomic tree generation from a FASTA file of (genomic) sequences.
+ViPTreeGen - a command line tool for viral proteomic tree generation from viral genomic sequences.
 ViPTreeGen is a part of the ViPTree server project (http://www.genome.jp/viptree).
 
 If you use many sequences (e.g. >100) or large sequences (e.g. NCLDV genomes), it may take a long time.
