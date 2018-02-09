@@ -26,6 +26,7 @@ fin      = args[1]
 foutpref = args[2]
 flag     = args[3]
 method   = args[4]
+flog     = args[5]
 
 ## parse matrix
 df = read.delim(fin, row.names=1)

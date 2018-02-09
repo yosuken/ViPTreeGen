@@ -1,17 +1,16 @@
 #!/bin/bash
-#
-#  ViPTreeGen - a command line tool for viral proteomic tree generation
-#
-#    Copyright: 2017 (C) Yosuke Nishimura (yosuke@kuicr.kyoto-u.ac.jp)
-#    License: MIT license
-#    Initial version: 2017-02-07
-#
+###
+### ViPTreeGen ver 1.0.1 (2018-02-08): a tool for viral proteomic tree generation
+###
+### Copyright: 2017 (C) Yosuke Nishimura (yosuke@kuicr.kyoto-u.ac.jp)
+### Licence: MIT license
+###
 
 PROGNAME=$(basename $0)
 VERSION="1.0.1"
 PROGNAMEc="[35m$PROGNAME[0m"
 Errmsg="[31m[error][0m"
-Sccmsg="[31m[error][0m"
+Sccmsg="[32m[success][0m"
 Moddate="2018-02-08"
 
 
@@ -20,10 +19,10 @@ read -r -d '' usage <<EOF
 [35m### $PROGNAME ver $VERSION ($Moddate) ###[0m
 
 [32m[description][0m
-$PROGNAME - a command line tool for viral proteomic tree generation from a FASTA file of (genomic) sequences.
-$PROGNAME is a part of the ViPTree server project (http://www.genome.jp/viptree).
+$PROGNAME - tool for viral proteomic tree generation from viral genomic sequences.
+$PROGNAME has been developed as the ViPTree server project (http://www.genome.jp/viptree).
 
-If you use many sequences (e.g. >100) or large sequences (e.g. NCLDV genomes), it may take a long time.
+If you compute many sequences (e.g. >100) or large sequences (e.g. NCLDV genomes), it may take a long time.
 In those cases, use '--ncpus' or '--queue' for parallel computating.
 
 [32m[usage][0m
@@ -45,7 +44,7 @@ $ $PROGNAME <input fasta> <output dir> [options]
     -v, --version
 
   (tblastx)
-    --cutlen       [>=10000]   (default: 100000)    -- length to split input seqs for speed up calculation
+    --cutlen       [>=10000]   (default: 100000)    -- length to split input sequences for faster tblastx computation
     --dbsize       [int]       (default: 200000000)
     --matrix       [str]       (default: BLOSUM45)
     --evalue       [num]       (default: 1e-2)
@@ -208,6 +207,7 @@ fi
 # {{{ check dependencies
 ### check availablity of tblastx
 command -v tblastx >/dev/null 2>&1 || { echo >&2 "$Errmsg tblastx is required but not available.  Aborting."; exit 1; }
+command -v makeblastdb >/dev/null 2>&1 || { echo >&2 "$Errmsg tblastx is required but not available.  Aborting."; exit 1; }
 
 ### check availablity of R and ape
 if [ -z $notree ]; then 
@@ -247,7 +247,7 @@ evalue="${evalue:-1e-2}"
 idt="${idt:-30}"
 aalen="${aalen:-30}"
 
-### tree calculation param
+### tree generation param
 method="${method:-bionj}"
 
 ### computation params
@@ -265,17 +265,30 @@ logdir=$dir/log
 # }}} assign variables 
 
 
-### run
-mkdir -p $logdir
-if [ -d $logdir ]; then
-	rake -f $rakefile dir="$dir" fin="$fin" cutlen="$cutlen" dbsize="$dbsize" matrix="$matrix" evalue="$evalue" idt="$idt" aalen="$aalen" \
-		method="$method" queue="$queue" ncpus="$ncpus" wtime="$wtime" notree="$notree" 2>&1 |tee $logdir/$jobname.log
-fi
+# {{{ after run function
+function after_run(){
+  endTime=$(LC_ALL=C date +"%Y-%m-%d %H:%M:%S %z")
 
-### after run
-if [[ "${PIPESTATUS[0]}" -gt 0 ]] || [[ "${PIPESTATUS[1]}" -gt 0 ]] ; then 
-	echo "$Errmsg calculation failed: $(LC_ALL=C date +'%Y-%m-%d %H:%M:%S %z')" > $logdir/error
-	exit 1
-else
-	echo "$Sccmsg calculation finished: $(LC_ALL=C date +'%Y-%m-%d %H:%M:%S %z')" > $logdir/success
-fi
+  if [[ $1 -gt 0 ]] ; then
+    echo "$Errmsg run failed: $endTime" > "$logdir/$startTime.$jobname.error"
+    exit 1
+  else
+    echo "$Sccmsg run finished: $endTime" > "$logdir/$startTime.$jobname.success"
+  fi
+}
+### }}} after run function
+
+
+### main
+mkdir -p $logdir
+startTime=$(LC_ALL=C date +"%Y-%m-%d %H:%M:%S")
+
+## trap Ctrl-C etc...
+trap 'after_run 1' 1 2 3 9 15
+
+### run
+rake -f $rakefile dir="$dir" fin="$fin" cutlen="$cutlen" dbsize="$dbsize" matrix="$matrix" evalue="$evalue" idt="$idt" aalen="$aalen" \
+	method="$method" queue="$queue" ncpus="$ncpus" wtime="$wtime" notree="$notree" 2>&1 |tee $logdir/$jobname.log
+st=$(( ${PIPESTATUS[0]} + ${PIPESTATUS[1]} ))
+after_run $st
+

@@ -372,6 +372,7 @@ task "03-2.matrix_to_nj", ["step"] do |t, args|
 	script   = "#{File.dirname(__FILE__)}/script/#{t.name}.R"
 	fin      = "#{rdir}/all.#{flag}.matrix"
 	foutpref = "#{rdir}/all.#{method}"
-	sh "LANG=en_US.UTF-8 Rscript --no-save --no-restore #{script} #{fin} #{foutpref} #{flag} #{method}"
+	flog     = "#{rdir}/all.#{method}.makelog"
+	sh "LANG=C Rscript --no-save --no-restore #{script} #{fin} #{foutpref} #{flag} #{method} >#{flog} 2>&1"
 end
 # }}} tasks 03
