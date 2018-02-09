@@ -1,15 +1,16 @@
 
 # ViPTreeGen - a standalone tool for viral proteomic tree generation
 
-### description
-ViPTreeGen has been developed as the ViPTree server project (http://www.genome.jp/viptree).
+## description
+ViPTreeGen has been developed as the ViPTree server project.
+[ViPTree server](http://www.genome.jp/viptree)
 
-### requirements
+## requirements
 * BLAST+
 * Ruby (ver >=2.0)
 * R (ver >=3.0)
 
-### usage 
+## usage 
 ```
 ### ViPTreeGen ver 1.0.1 (2018-02-08) ###
 
@@ -64,7 +65,7 @@ result/all.[bio]nj.[a|de]sc.newick -- Newick files of the viral proteomic tree, 
                                       desc: nodes with more children sorting before nodes with fewer children.
 ```
 
-### citation
+## citation
 If you use results (data / figures) genereted by ViPTree in your research, please cite:
 ```
 ViPTree: the viral proteomic tree server. Bioinformatics 33:2379–2380 (2017), doi:10.1093/bioinformatics/btx157
