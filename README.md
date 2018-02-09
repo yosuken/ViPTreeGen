@@ -2,8 +2,7 @@
 # ViPTreeGen - a standalone tool for viral proteomic tree generation
 
 ## description
-ViPTreeGen has been developed as the ViPTree server project.
-[ViPTree server](http://www.genome.jp/viptree)
+ViPTreeGen has been developed as [the ViPTree server project](http://www.genome.jp/viptree).
 
 ## requirements
 * BLAST+
