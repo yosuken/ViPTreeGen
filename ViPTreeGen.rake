@@ -88,7 +88,13 @@ task "01-1.prep_for_tblastx", ["step"] do |t, args|
 	## validate and make copy of input fasta
 	open("#{odir}/all.len", "w"){ |flen|
 		open(fa, "w"){ |fall|
-			IO.read(Fin).split(/^>/)[1..-1].each{ |ent|
+			fasta_str = IO.read(Fin)
+
+			# check if input is fasta format
+			raise("\e[31mError: input sequence is not in FASTA format.\e[0m") if fasta_str[0] != ">"
+
+			uniqlab = {}
+			fasta_str.split(/^>/)[1..-1].each{ |ent|
 				lab, *seq = ent.split("\n")
 				seq  = seq.join
 				len  = seq.size
@@ -99,8 +105,13 @@ task "01-1.prep_for_tblastx", ["step"] do |t, args|
 				# label validation and modification
 				lab = lab.gsub(/[^0-9a-zA-Z\_\-\.]/, "_")
 
-				# [TODO] len  validation
-				# raise if len  < XXX
+				### detect sequence format error
+				raise("\e[31mError: too short sequence (length < 100 nt) included.\e[0m") if len < 100
+				raise("\e[31mError: not acceptable character detected (allowed character list in nucleotide sequence: 'ACGTRYKMSWBDHVN').\e[0m") if seq =~ /[^ACGTRYKMSWBDHVN]/
+				raise("\e[31mError: sequence name is not uniq. '#{lab}' is found twice.\e[0m") if uniqlab[lab]
+
+				# store sequence name
+				uniqlab[lab] = 1
 
 				# make cat output
 				flen.puts [lab, len]*"\t"
