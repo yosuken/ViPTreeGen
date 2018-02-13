@@ -1,9 +1,12 @@
 
 # ViPTreeGen - a standalone tool for viral proteomic tree generation
 
+[![license](https://img.shields.io/github/license/mashape/apistatus.svg)](/LICENSE)
+[![size](https://img.shields.io/github/size/webcaetano/craft/build/phaser-craft.min.js.svg)]()
+[![doi](https://img.shields.io/badge/doi-10.1093%2Fbioinformatics%2Fbtx157-blue.svg?style=flat)](https://doi.org/10.1093/bioinformatics/btx157)
+
 ## description
 ViPTreeGen has been developed as [the ViPTree server project](http://www.genome.jp/viptree).
-[![license](https://img.shields.io/github/license/mashape/apistatus.svg)]()
 
 ## requirements
 * BLAST+
