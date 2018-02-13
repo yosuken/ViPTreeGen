@@ -5,13 +5,13 @@
 [![size](https://img.shields.io/github/size/webcaetano/craft/build/phaser-craft.min.js.svg)]()
 [![doi](https://img.shields.io/badge/doi-10.1093%2Fbioinformatics%2Fbtx157-blue.svg?style=flat)](https://doi.org/10.1093/bioinformatics/btx157)
 
-ViPTreeGen is a handful tool for generation of viral "proteomic tree" based on genome-wide sequence similarities computed by tBLASTx.
-The original proteomic tree concept (i.e., "the Phage Proteomic Tree”) was developed by [Rohwer and Edwards, 2002](https://doi.org/10.1128/JB.184.16.4529-4535.2002).
+ViPTreeGen is a tool for automated generation of viral "proteomic tree" by computing genome-wide sequence similarities based on tBLASTx results.
+The original proteomic tree (i.e., "the Phage Proteomic Tree”) was developed by [Rohwer and Edwards, 2002](https://doi.org/10.1128/JB.184.16.4529-4535.2002).
 A proteomic tree is a dendrogram that reveals global genomic similarity relationships between tens, hundreds, or thousands of viruses.
 It has been shown that viral groups identified in a proteomic tree well correspond to established viral taxonomies.
 The proteomic tree approach is effective to investigate genomes of newly sequenced viruses as well as those identified in metagenomes.
 
-ViPTreeGen has been developed as [the ViPTree server project](http://www.genome.jp/viptree).
+ViPTreeGen has been developed as a part of [the ViPTree server project](http://www.genome.jp/viptree).
 
 ## requirements
 * BLAST+
