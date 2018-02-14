@@ -7,27 +7,38 @@
 ###
 
 PROGNAME=$(basename $0)
-VERSION="1.0.1"
-Errmsg="[31m[error][0m"
-Sccmsg="[32m[success][0m"
-Moddate="2018-02-08"
+VERSION="1.0.2"
+Errmsg="[1;31m[error][0m"
+Sccmsg="[1;32m[success][0m"
+Moddate="2018-02-14"
 
 
 # {{{ usage
 read -r -d '' usage <<EOF
-[35m### $PROGNAME ver $VERSION ($Moddate) ###[0m
+[1;35m### $PROGNAME ver $VERSION ($Moddate) ###[0m
 
-[32m[description][0m
+[1;32m[description][0m
 $PROGNAME - tool for viral proteomic tree generation from viral genomic sequences.
 $PROGNAME has been developed as the ViPTree server project (http://www.genome.jp/viptree).
 
-If you compute many sequences (e.g. >100) or large sequences (e.g. NCLDV genomes), it may take a long time.
+$PROGNAME first computes genome-wide sequence similarity distance based on tBLASTx results,
+then construct (bio)nj tree based on the distance (1 - similarity) matrix.
+
+Complete genomes are recommended as input sequence for accurate distance/tree computation,
+though genome fragments are also acceptable.
+
+If you compute many sequences (e.g. n > 100) or large sequences (e.g. NCLDV genomes), it may take a long time.
 In those cases, use '--ncpus' or '--queue' for parallel computating.
 
-[32m[usage][0m
-$ $PROGNAME <input fasta> <output dir> [options]
+[1;32m[usage][0m
+$ $PROGNAME [options] <input fasta> <output dir>
 
-[32m[dependencies][0m
+- <input fasta> should be in nucleotide FASTA format and include at least 3 sequences.
+- If sequence name (before the first space in the header line) includes a character other than
+  alphabets, numbers, dot(.), hyphen(-), or underscore(_), it will be replaced with underscore.
+- <output dir> should not exist.
+
+[1;32m[dependencies][0m
     - tblastx              -- included in the BLAST+ program;
                               https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download
     - ruby (ver >=2.0) 
@@ -37,7 +48,7 @@ $ $PROGNAME <input fasta> <output dir> [options]
     - R package 'ape'      -- try install.packages('ape') in R terminal
     - R package 'phangorn' -- try install.packages('phangorn') in R terminal
 
-[32m[options][0m
+[1;32m[options][0m
   (general)
     -h, --help
     -v, --version
@@ -54,18 +65,26 @@ $ $PROGNAME <input fasta> <output dir> [options]
     --notree                   (default: off)       -- generate only similarity/distance matrix
     --method       [nj|bionj]  (default: bionj)     -- proteomic tree generation method
 
+  (2D mode)
+    --2D           [query fasta] (default: off)     -- do not generate tree but similarity matrix of: 'query sequences' against 'input sequences'. 2D mode is designed to find the most related 'input sequence' for each 'query sequence'
+
   (use GNU parallel)
     --ncpus        [int]                            -- number of jobs in parallel	
 
   (for icr user)                                    -- for computation in the ICR supercomputer system
     --queue        [JP1]                            -- queue for computation
 
-[32m[output files][0m
+[1;32m[output files][0m
+(normal mode)
 result/all.sim.matrix              -- similarity (SG score) matrix
 result/all.dist.matrix             -- distance (1-SG score) matrix
 result/all.[bio]nj.[a|de]sc.newick -- Newick files of the viral proteomic tree, midpoint rooted and ladderized
-                                      asc: nodes with fewer children sort before nodes with more children.
-                                      desc: nodes with more children sorting before nodes with fewer children.
+                                      asc: (nodes with fewer children) --> (nodes with more children).
+                                      desc: (nodes with more children) --> (nodes with fewer children).
+
+(2D mode)
+result/2D.sim.matrix               -- similarity (SG score) matrix (row-wise: query fasta, column-wise: input fasta)
+result/top5.sim.list               -- top5 SG scores (and relevant sequences) for each query sequence
 EOF
 # }}} usage
 
@@ -166,6 +185,14 @@ do
 			wtime="$2"
 			shift 2
 			;;
+		'--2D' )
+			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
+				echo "$Errmsg option requires a FASTA file -- $1" 1>&2
+				exit 1
+			fi
+			twoD="$2"
+			shift 2
+			;;
 		'--'|'-' )
 			shift 1
 			params+=( "$@" )
@@ -205,8 +232,8 @@ fi
 
 # {{{ check dependencies
 ### check availablity of tblastx
-command -v tblastx >/dev/null 2>&1 || { echo >&2 "$Errmsg tblastx is required but not available.  Aborting."; exit 1; }
-command -v makeblastdb >/dev/null 2>&1 || { echo >&2 "$Errmsg tblastx is required but not available.  Aborting."; exit 1; }
+command -v tblastx >/dev/null 2>&1 || { echo >&2 "$Errmsg tblastx (in BLAST+ package) is required but not available.  Aborting."; exit 1; }
+command -v makeblastdb >/dev/null 2>&1 || { echo >&2 "$Errmsg makeblastdb (in BLAST+ package) is required but not available.  Aborting."; exit 1; }
 
 ### check availablity of R and ape
 if [ -z $notree ]; then 
@@ -249,6 +276,9 @@ aalen="${aalen:-30}"
 ### tree generation param
 method="${method:-bionj}"
 
+### 2D mode
+twoD="${twoD:-}"
+
 ### computation params
 queue="${queue}"
 nthread="${nthread:-1}"
@@ -287,7 +317,7 @@ trap 'after_run 1' 1 2 3 9 15
 
 ### run
 rake -f $rakefile dir="$dir" fin="$fin" cutlen="$cutlen" dbsize="$dbsize" matrix="$matrix" evalue="$evalue" idt="$idt" aalen="$aalen" \
-	method="$method" queue="$queue" ncpus="$ncpus" wtime="$wtime" notree="$notree" 2>&1 |tee $logdir/$jobname.log
+	twoD="$twoD" method="$method" queue="$queue" ncpus="$ncpus" wtime="$wtime" notree="$notree" 2>&1 |tee $logdir/$jobname.log
 st=$(( ${PIPESTATUS[0]} + ${PIPESTATUS[1]} ))
 after_run $st
 
