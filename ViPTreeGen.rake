@@ -151,8 +151,8 @@ task "01-1.2D.prep_for_tblastx", ["step"] do |t, args|
 			lab = lab.gsub(/[^0-9a-zA-Z\_\-\.]/, "_")
 
 			### detect sequence format error
-			raise("\e[1;31mError:\e[0m too short sequence (length < 100 nt) included.") if len < 100
-			raise("\e[1;31mError:\e[0m not acceptable character detected (allowed character list in nucleotide sequence: 'ACGTRYKMSWBDHVN').") if seq =~ /[^ACGTRYKMSWBDHVN]/
+			raise("\e[1;31mError:\e[0m '#{lab}' is too short (length < 100 nt) included.") if len < 100
+			raise("\e[1;31mError:\e[0m not acceptable character is detected in sequence of '#{lab}' (allowed characters are 'ACGTRYKMSWBDHVN').") if seq =~ /[^ACGTRYKMSWBDHVN]/
 			raise("\e[1;31mError:\e[0m sequence name is not uniq. '#{lab}' is found twice in #{fasname}.") if lab2seq[lab]
 
 			# store sequence name
@@ -256,9 +256,9 @@ task "01-1.prep_for_tblastx", ["step"] do |t, args|
 				lab = lab.gsub(/[^0-9a-zA-Z\_\-\.]/, "_")
 
 				### detect sequence format error
-				raise("\e[1;31mError:\e[0m too short sequence (length < 100 nt) included.") if len < 100
-				raise("\e[1;31mError:\e[0m not acceptable character detected (allowed character list in nucleotide sequence: 'ACGTRYKMSWBDHVN').") if seq =~ /[^ACGTRYKMSWBDHVN]/
-				raise("\e[1;31mError:\e[0m sequence name is not uniq. '#{lab}' is found twice.") if uniqlab[lab]
+				raise("\e[1;31mError:\e[0m '#{lab}' is too short (length < 100 nt) included.") if len < 100
+				raise("\e[1;31mError:\e[0m not acceptable character is detected in sequence of '#{lab}' (allowed characters are 'ACGTRYKMSWBDHVN').") if seq =~ /[^ACGTRYKMSWBDHVN]/
+				raise("\e[1;31mError:\e[0m sequence name is not uniq. '#{lab}' is found twice in #{fasname}.") if lab2seq[lab]
 
 				# store sequence name
 				uniqlab[lab] = 1
