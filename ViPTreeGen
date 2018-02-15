@@ -1,16 +1,16 @@
 #!/bin/bash
 ###
-### ViPTreeGen ver 1.0.1 (2018-02-08): a tool for viral proteomic tree generation
+### ViPTreeGen ver 1.1.0 (2018-02-15): a tool for viral proteomic tree generation
 ###
 ### Copyright: 2017 (C) Yosuke Nishimura (yosuke@kuicr.kyoto-u.ac.jp)
 ### Licence: MIT license
 ###
 
 PROGNAME=$(basename $0)
-VERSION="1.0.2"
+VERSION="1.1.0"
 Errmsg="[1;31m[error][0m"
 Sccmsg="[1;32m[success][0m"
-Moddate="2018-02-14"
+Moddate="2018-02-15"
 
 
 # {{{ usage
@@ -75,16 +75,16 @@ $ $PROGNAME [options] <input fasta> <output dir>
     --queue        [JP1]                            -- queue for computation
 
 [1;32m[output files][0m
-(normal mode)
-result/all.sim.matrix              -- similarity (SG score) matrix
-result/all.dist.matrix             -- distance (1-SG score) matrix
-result/all.[bio]nj.[a|de]sc.newick -- Newick files of the viral proteomic tree, midpoint rooted and ladderized
-                                      asc: (nodes with fewer children) --> (nodes with more children).
-                                      desc: (nodes with more children) --> (nodes with fewer children).
+  (normal mode)
+    result/all.sim.matrix              -- similarity (SG score) matrix
+    result/all.dist.matrix             -- distance (1-SG score) matrix
+    result/all.[bio]nj.[a|de]sc.newick -- Newick files of the viral proteomic tree, midpoint rooted and ladderized
+                                          asc: (nodes with fewer children) --> (nodes with more children).
+                                          desc: (nodes with more children) --> (nodes with fewer children).
 
-(2D mode)
-result/2D.sim.matrix               -- similarity (SG score) matrix (row-wise: query fasta, column-wise: input fasta)
-result/top5.sim.list               -- top5 SG scores (and relevant sequences) for each query sequence
+  (2D mode)
+    result/2D.sim.matrix               -- similarity (SG score) matrix (row-wise: query fasta, column-wise: input fasta)
+    result/top10.sim.list              -- top10 SG scores (and relevant sequences) for each query sequence
 EOF
 # }}} usage
 
@@ -239,9 +239,9 @@ command -v makeblastdb >/dev/null 2>&1 || { echo >&2 "$Errmsg makeblastdb (in BL
 if [ -z $notree ]; then 
 	command -v R >/dev/null 2>&1 || \
 		{ echo >&2 "$Errmsg R is required but not available.  Aborting."; exit 1; }
-	R --no-save --no-restore -e "library('ape')" >/dev/null 2>&1 || \
+	LANG=C R --quiet --no-save --no-restore -e "library('ape')" >/dev/null 2>&1 || \
 		{ echo >&2 "$Errmsg R package 'ape' must be installed but not available.  Aborting."; exit 1; }
-	R --no-save --no-restore -e "library('phangorn')" >/dev/null 2>&1 || \
+	LANG=C R --quiet --no-save --no-restore -e "library('phangorn')" >/dev/null 2>&1 || \
 		{ echo >&2 "$Errmsg R package 'phangorn' must be installed but not available.  Aborting."; exit 1; }
 fi
 

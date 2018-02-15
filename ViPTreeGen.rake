@@ -33,36 +33,65 @@ end
 
 PrintStatus = lambda do |current, total, status, t|
 	puts ""
-	puts "===== #{Time.now}"
-	puts "===== step #{current} / #{total} (#{t.name}) -- #{status}"
+	puts "\e[1;32m===== #{Time.now}\e[0m"
+	puts "\e[1;32m===== step #{current} / #{total} (#{t.name}) -- #{status}\e[0m"
 	puts ""
 	$stdout.flush
+end
+
+CheckVersion = lambda do |commands|
+	commands.each{ |command|
+		str = case command
+					when "ruby"
+						%|ruby --version 2>&1|
+					when "makeblastdb"
+						%|makeblastdb -version 2>&1|
+					when "tblastx"
+						%|tblastx -version 2>&1|
+					when "R"
+						%|LANG=C R --version 2>&1|
+					when "ape"
+						%|LANG=C R --quiet --no-save --no-restore -e "packageVersion('ape')" 2>&1|
+					when "phangorn"
+						%|LANG=C R --quiet --no-save --no-restore -e "packageVersion('phangorn')" 2>&1|
+					end
+		puts ""
+		puts "\e[1;32m===== check version: #{command}\e[0m"
+		puts ""
+		puts "$ #{str}"
+		### run
+		puts `#{str}`
+		### flush
+		$stdout.flush
+	}
 end
 # }}} procedures
 
 
 # {{{ default (run all tasks)
 task :default do
+	### check version
+	CheckVersion.call(%w|tblastx makeblastdb R ape phangorn ruby|)
+
 	### shared tasks
 	tasks = %w|
-    01-2.tblastx 01-3.cat_and_rename_split_tblastx
-    02-1.tblastx_filter 02-2.make_sbed_of_blast 02-3.make_summary_pre 02-4.make_self_tblastx 02-5.make_summary_tsv 
+    01-2.tblastx 01-3.cat_and_rename_split_tblastx 02-1.tblastx_filter 02-2.make_sbed_of_blast 02-3.make_summary_pre 02-4.make_self_tblastx 
 	|
 	### add specific tasks
 	if ENV["twoD"] == "" ## not 2D mode
 		if ENV["notree"] == "" ## make tree
-			tasks = %w|01-1.prep_for_tblastx| + tasks + %w|03-1.make_matrix 03-2.matrix_to_nj|
+			tasks = %w|01-1.prep_for_tblastx| + tasks + %w|02-5.make_summary_tsv 03-1.make_matrix 03-2.matrix_to_nj|
 		else ## only generate matrix
-			tasks = %w|01-1.prep_for_tblastx| + tasks + %w|03-1.make_matrix|
+			tasks = %w|01-1.prep_for_tblastx| + tasks + %w|02-5.make_summary_tsv 03-1.make_matrix|
 		end
 	else ## 2D mode
-		Fin_q  = ENV["twoD"] # query file in 2D mode
-		tasks  = %w|01-1.2D.prep_for_tblastx| + tasks + %w|03-1.2D.make_matrix| ## add 2D tasks
+		tasks = %w|01-1.2D.prep_for_tblastx| + tasks + %w|02-5.2D.make_summary_tsv 03-1.2D.make_matrix| ## add 2D tasks
 	end
 
 	Odir     = ENV["dir"]
 	Fin      = ENV["fin"]
 	Flen     = "#{Odir}/cat/all/query.len"
+	Fin_q    = ENV["twoD"]        # query file in 2D mode
 
 	Cutlen   = ENV["cutlen"].to_i # default: 100,000
 	DBsize   = ENV["dbsize"]      # default: 200,000,000
@@ -76,7 +105,7 @@ task :default do
 
 	Max_target_seqs = 1_000_000
 
-	Method   = ENV["method"]||"bionj"
+	TreeMethod = ENV["method"]||"bionj"
 
 	NumStep  = tasks.size
 	tasks.each.with_index(1){ |task, idx|
@@ -155,6 +184,7 @@ task "01-1.2D.prep_for_tblastx", ["step"] do |t, args|
 
 	### write node fasta
 	lab2seq_q.each{ |lab, seq|
+		len   = seq.size
 		n0dir = "#{Odir}/node/#{lab}/seq";   mkdir_p n0dir
 		n1dir = "#{Odir}/node/#{lab}/blast"; mkdir_p n1dir
 
@@ -193,7 +223,7 @@ task "01-1.2D.prep_for_tblastx", ["step"] do |t, args|
 	WriteBatch.call(outs, jdir, t)
 
 	## makeblastdb
-	sh "makeblastdb -dbtype nucl -hash_index -parse_seqids -in #{fa} -out #{fa} -title #{File.basename(fa)} 2>#{log}"
+	sh "makeblastdb -dbtype nucl -in #{fa} -out #{fa} -title #{File.basename(fa)} 2>#{log}"
 end
 desc "01-1.prep_for_tblastx"
 task "01-1.prep_for_tblastx", ["step"] do |t, args|
@@ -410,6 +440,16 @@ task "02-5.make_summary_tsv", ["step"] do |t, args|
 		sh "ruby #{script} #{Flen} #{Odir} #{type}" # output "#{Odir}/node/*/blast/#{type}.summary.tsv"
 	}
 end
+desc "02-5.2D.make_summary_tsv"
+task "02-5.2D.make_summary_tsv", ["step"] do |t, args|
+	PrintStatus.call(args.step, NumStep, "START", t)
+	script   = "#{File.dirname(__FILE__)}/script/#{t.name}.rb"
+	flen_q   = "#{Odir}/cat/all/query.len"
+	flen_i   = "#{Odir}/cat/all/input.len"
+	%w|tblastx|.each{ |type|
+		sh "ruby #{script} #{flen_q} #{flen_i} #{Odir} #{type}" # output "#{Odir}/node/*/blast/#{type}.summary.tsv"
+	}
+end
 # }}} tasks 02
 
 
@@ -421,13 +461,14 @@ task "03-1.2D.make_matrix", ["step"] do |t, args|
 	qids = IO.readlines("#{Odir}/cat/all/query.len").map{ |l| l.chomp.split("\t")[0] }
 	tids = IO.readlines("#{Odir}/cat/all/input.len").map{ |l| l.chomp.split("\t")[0] }
 
-	similarities = Hash.new{ |h, i| h[i] = Hash.new(0.0) }
 	%w|tblastx|.each{ |type|
+		similarities = Hash.new{ |h, i| h[i] = Hash.new(0.0) }
 		qids.each{ |id1|
 			fin = "#{Odir}/node/#{id1}/blast/#{type}.summary.tsv"
 			IO.readlines(fin)[1..-1].each{ |l|
 				sim, id2 = l.chomp.split("\t").values_at(3, 0)
 				similarities[id1][id2] = sim.to_f
+				similarities[id2][id1] = sim.to_f
 			}
 		}
 
@@ -439,6 +480,7 @@ task "03-1.2D.make_matrix", ["step"] do |t, args|
 				s = s == 0 ? "0" : (s == 1 ? "1" : "%.4f" % s)
 				out << s
 			}
+			outs << out
 		}
 		open("#{rdir}/2D.sim.matrix", "w"){ |fout|
 			fout.puts ["", tids]*"\t"
@@ -446,17 +488,17 @@ task "03-1.2D.make_matrix", ["step"] do |t, args|
 				fout.puts out*"\t"
 			}
 		}
-		open("#{rdir}/top5.sim.list", "w"){ |fout|
+		open("#{rdir}/top10.sim.list", "w"){ |fout|
 			outs.each{ |out|
 				query, *scores = out
 				score2tids = Hash.new{ |h, i| h[i] = [] }
 				tids.zip(scores){ |tid, score|
-					score2tids[score] << tids
+					score2tids[score] << tid
 				}
 				a = []
 				score2tids.sort_by{ |score, tids| -score.to_f }.each{ |score, tids|
 					tids.each{ |tid|
-						break if a.size >= 5
+						break if a.size >= 10
 						a << "#{tid}:#{score}"
 					}
 				}
@@ -471,8 +513,8 @@ task "03-1.make_matrix", ["step"] do |t, args|
 	rdir = "#{Odir}/result"; mkdir_p rdir
 	ids  = Nodes.keys
 
-	similarities = Hash.new{ |h, i| h[i] = Hash.new(0.0) }
 	%w|tblastx|.each{ |type|
+		similarities = Hash.new{ |h, i| h[i] = Hash.new(0.0) }
 		fout1   = open("#{rdir}/all.sim.matrix", "w")
 		fout2   = open("#{rdir}/all.dist.matrix", "w")
 
@@ -509,8 +551,8 @@ task "03-2.matrix_to_nj", ["step"] do |t, args|
 	flag     = "dist"
 	script   = "#{File.dirname(__FILE__)}/script/#{t.name}.R"
 	fin      = "#{rdir}/all.#{flag}.matrix"
-	foutpref = "#{rdir}/all.#{Method}"
-	flog     = "#{rdir}/all.#{Method}.makelog"
-	sh "LANG=C Rscript --no-save --no-restore #{script} #{fin} #{foutpref} #{flag} #{Method} >#{flog} 2>&1"
+	foutpref = "#{rdir}/all.#{TreeMethod}"
+	flog     = "#{rdir}/all.#{TreeMethod}.makelog"
+	sh "LANG=C Rscript --quiet --no-save --no-restore #{script} #{fin} #{foutpref} #{flag} #{TreeMethod} >#{flog} 2>&1"
 end
 # }}} tasks 03

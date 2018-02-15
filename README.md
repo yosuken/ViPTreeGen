@@ -20,17 +20,28 @@ ViPTreeGen has been developed as a part of [the ViPTree server project](http://w
 
 ## usage 
 ```
-### ViPTreeGen ver 1.0.1 (2018-02-08) ###
+### ViPTreeGen ver 1.1.0 (2018-02-15) ###
 
 [description]
 ViPTreeGen - tool for viral proteomic tree generation from viral genomic sequences.
 ViPTreeGen has been developed as the ViPTree server project (http://www.genome.jp/viptree).
 
-If you compute many sequences (e.g. >100) or large sequences (e.g. NCLDV genomes), it may take a long time.
+ViPTreeGen first computes genome-wide sequence similarity distance based on tBLASTx results,
+then construct (bio)nj tree based on the distance (1 - similarity) matrix.
+
+Complete genomes are recommended as input sequence for accurate distance/tree computation,
+though genome fragments are also acceptable.
+
+If you compute many sequences (e.g. n > 100) or large sequences (e.g. NCLDV genomes), it may take a long time.
 In those cases, use '--ncpus' or '--queue' for parallel computating.
 
 [usage]
-$ ViPTreeGen <input fasta> <output dir> [options]
+$ ViPTreeGen [options] <input fasta> <output dir>
+
+- <input fasta> should be in nucleotide FASTA format and include at least 3 sequences.
+- If sequence name (before the first space in the header line) includes a character other than
+  alphabets, numbers, dot(.), hyphen(-), or underscore(_), it will be replaced with underscore.
+- <output dir> should not exist.
 
 [dependencies]
     - tblastx              -- included in the BLAST+ program;
@@ -59,6 +70,9 @@ $ ViPTreeGen <input fasta> <output dir> [options]
     --notree                   (default: off)       -- generate only similarity/distance matrix
     --method       [nj|bionj]  (default: bionj)     -- proteomic tree generation method
 
+  (2D mode)
+    --2D           [query fasta] (default: off)     -- do not generate tree but similarity matrix of: 'query sequences' against 'input sequences'. 2D mode is designed to find the most related 'input sequence' for each 'query sequence'
+
   (use GNU parallel)
     --ncpus        [int]                            -- number of jobs in parallel
 
@@ -66,11 +80,16 @@ $ ViPTreeGen <input fasta> <output dir> [options]
     --queue        [JP1]                            -- queue for computation
 
 [output files]
-result/all.sim.matrix              -- similarity (SG score) matrix
-result/all.dist.matrix             -- distance (1-SG score) matrix
-result/all.[bio]nj.[a|de]sc.newick -- Newick files of the viral proteomic tree, midpoint rooted and ladderized
-                                      asc: nodes with fewer children sort before nodes with more children.
-                                      desc: nodes with more children sorting before nodes with fewer children.
+  (normal mode)
+    result/all.sim.matrix              -- similarity (SG score) matrix
+    result/all.dist.matrix             -- distance (1-SG score) matrix
+    result/all.[bio]nj.[a|de]sc.newick -- Newick files of the viral proteomic tree, midpoint rooted and ladderized
+                                          asc: (nodes with fewer children) --> (nodes with more children).
+                                          desc: (nodes with more children) --> (nodes with fewer children).
+
+  (2D mode)
+    result/2D.sim.matrix               -- similarity (SG score) matrix (row-wise: query fasta, column-wise: input fasta)
+    result/top10.sim.list              -- top10 SG scores (and relevant sequences) for each query sequence
 ```
 
 ## citation
