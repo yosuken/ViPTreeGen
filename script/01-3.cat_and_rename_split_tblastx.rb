@@ -6,7 +6,7 @@
 #    Initial version: 2017-02-07
 #
 
-node, program, flen, n1dir, cutlen = ARGV
+node, program, fa, n1dir, cutlen = ARGV
 cutlen = cutlen.to_i
 
 out   = []
@@ -23,7 +23,12 @@ Dir["#{n1dir}/split/*/#{program}.out"].sort_by{ |fin| fin.split("/")[-2].to_i }.
 	}
 }
 
-order = IO.readlines(flen).each_with_index.inject({}){ |h, (l, idx)| h[l.split("\t")[0]] = idx; h }
+# order = IO.readlines(flen).each_with_index.inject({}){ |h, (l, idx)| h[l.split("\t")[0]] = idx; h }
+order = {} ###
+IO.read(fa).split(/^>/)[1..-1].each_with_index{ |ent, idx|
+	lab, *seq = ent.split("\n") 
+	order[lab] = idx
+}
 open("#{n1dir}/#{program}.out", "w"){ |fout|
 	out.sort_by{ |a| [order[a[1]], a[10].to_f] }.each{ |a| fout.puts a*"\t" }
 }

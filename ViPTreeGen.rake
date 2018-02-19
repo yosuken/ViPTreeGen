@@ -121,8 +121,8 @@ task "01-1.2D.prep_for_tblastx", ["step"] do |t, args|
 	PrintStatus.call(args.step, NumStep, "START", t)
 	jdir     = "#{Odir}/batch/#{t.name.split(".")[0]}"; mkdir_p jdir
 	odir     = "#{Odir}/cat/all"; mkdir_p odir
-	log      = "#{odir}/ref.fasta.makeblastdb.log"
-	fa       = "#{odir}/ref.fasta"   # for tblastx. Union of input FASTA and query FASTA
+	log      = "#{odir}/all.fasta.makeblastdb.log"
+	fa       = "#{odir}/all.fasta"   # for tblastx. Union of input FASTA and query FASTA
 	outs     = []
 
 	## validate and make copy of input fasta
@@ -145,7 +145,7 @@ task "01-1.2D.prep_for_tblastx", ["step"] do |t, args|
 			len = seq.size
 
 			# take only label from comment line
-			lab = lab.split[0]
+			lab = lab.split(/\s+/)[0]
 
 			# label validation and modification
 			lab = lab.gsub(/[^0-9a-zA-Z\_\-\.]/, "_")
@@ -160,7 +160,7 @@ task "01-1.2D.prep_for_tblastx", ["step"] do |t, args|
 			uniqlab[lab] = 1
 		}
 	}
-	### write ref.fasta
+	### write all.fasta
 	open(fa, "w"){ |fall|
 		uniqlab.each_key{ |lab|
 			if q = lab2seq_q[lab] and i = lab2seq_i[lab]
@@ -326,12 +326,13 @@ task "01-3.cat_and_rename_split_tblastx", ["step"] do |t, args|
 
 	### set Nodes here
 	Nodes    = IO.readlines(Flen).inject({}){ |h, l| a=l.chomp.split("\t"); h[a[0]] = a[1].to_i; h }
+	fa       = "#{Odir}/cat/all/all.fasta"
 
 	Nodes.each{ |node, len|
 		n1dir = "#{Odir}/node/#{node}/blast"
 		if len > Cutlen
 			%w|tblastx|.each{ |program| 
-				outs << "ruby #{script} #{node} #{program} #{Flen} #{n1dir} #{Cutlen}" 
+				outs << "ruby #{script} #{node} #{program} #{fa} #{n1dir} #{Cutlen}" 
 			}
 		end
 	}
