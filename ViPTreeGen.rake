@@ -126,11 +126,11 @@ task "01-1.2D.prep_for_tblastx", ["step"] do |t, args|
 	outs     = []
 
 	## validate and make copy of input fasta
-	fasta_str_i = IO.read(Fin)
 	fasta_str_q = IO.read(Fin_q)
+	fasta_str_i = IO.read(Fin)
 
 	# check if input is fasta format
-	[fasta_str_i, fasta_str_q].zip(["query FASTA file", "input FASTA file"]){ |fasta_str, fasname|
+	[fasta_str_q, fasta_str_i].zip(["query FASTA file", "input FASTA file"]){ |fasta_str, fasname|
 		raise("\e[1;31mError:\e[0m #{fasname} might not be in FASTA format.") if fasta_str[0] != ">"
 		raise("\e[1;31mError:\e[0m #{fasname} should include at least 3 seqeuences.") if fasname == "input FASTA file" and fasta_str.split(/^>/)[1..-1].size < 3
 	}
