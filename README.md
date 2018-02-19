@@ -20,7 +20,7 @@ ViPTreeGen has been developed as a part of [the ViPTree server project](http://w
 
 ## usage 
 ```
-### ViPTreeGen ver 1.1.0 (2018-02-15) ###
+### ViPTreeGen ver 1.1.0 (2018-02-19) ###
 
 [description]
 ViPTreeGen - tool for viral proteomic tree generation from viral genomic sequences.
