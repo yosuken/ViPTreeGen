@@ -31,7 +31,7 @@ fins.each.with_index(1){ |fin, idx|
 
 		# USE ONLY HSP of [SHORTER => LONGER]
 		# next if id2order[que] > id2order[sub]
-		next if id2order[que] <=> id2order[sub] == 1 ### compare [length (as integer), id (in dictionary sort)]
+		next if (id2order[que] <=> id2order[sub]) == 1 ### compare [length (as integer), id (in dictionary sort)]
 
 		id2out[que] << a
 		id2out[sub] << a if que != sub
