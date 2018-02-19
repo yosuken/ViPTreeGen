@@ -477,7 +477,7 @@ task "03-1.2D.make_matrix", ["step"] do |t, args|
 		qids.each{ |id1|
 			out = [id1]
 			tids.each{ |id2|
-				s = similarities[id1][id2]
+				s = id1 == id2 ? 1 : similarities[id1][id2]
 				s = s == 0 ? "0" : (s == 1 ? "1" : "%.4f" % s)
 				out << s
 			}
