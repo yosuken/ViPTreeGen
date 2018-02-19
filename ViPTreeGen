@@ -11,6 +11,7 @@ VERSION="1.1.0"
 Errmsg="[1;31m[error][0m"
 Sccmsg="[1;32m[success][0m"
 Modidate="2018-02-19"
+incmd="$0 $*"
 
 
 # {{{ usage
@@ -300,6 +301,7 @@ function after_run(){
 
   if [[ $1 -gt 0 ]] ; then
     echo "$Errmsg run failed: $endTime" > "$logdir/$startTime.$jobname.error"
+    echo "$Errmsg process is killed: $endTime" |tee -a "$logdir/$jobname.log"
     exit 1
   else
     echo "$Sccmsg run finished: $endTime" > "$logdir/$startTime.$jobname.success"
@@ -309,10 +311,11 @@ function after_run(){
 
 
 # {{{ input command
-read -r -d '' incmd <<EOF
+read -r -d '' incmdlog <<EOF
 
 [1;32m===== command line[0m
-$ \$*
+
+$ $incmd
 
 EOF
 # }}} input command
@@ -323,7 +326,7 @@ mkdir -p $logdir
 startTime=$(LC_ALL=C date +"%Y-%m-%d %H:%M:%S")
 
 ## write input command
-echo $incmd |tee $logdir/$jobname.log
+echo "$incmdlog" |tee -a $logdir/$jobname.log
 
 ## trap Ctrl-C etc...
 trap 'after_run 1' 1 2 3 9 15
