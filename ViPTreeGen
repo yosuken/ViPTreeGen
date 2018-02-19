@@ -10,12 +10,12 @@ PROGNAME=$(basename $0)
 VERSION="1.1.0"
 Errmsg="[1;31m[error][0m"
 Sccmsg="[1;32m[success][0m"
-Moddate="2018-02-15"
+Modidate="2018-02-19"
 
 
 # {{{ usage
 read -r -d '' usage <<EOF
-[1;35m### $PROGNAME ver $VERSION ($Moddate) ###[0m
+[1;35m### $PROGNAME ver $VERSION ($Modidate) ###[0m
 
 [1;32m[description][0m
 $PROGNAME - tool for viral proteomic tree generation from viral genomic sequences.
@@ -308,16 +308,29 @@ function after_run(){
 ### }}} after run function
 
 
+# {{{ input command
+read -r -d '' incmd <<EOF
+
+[1;32m===== command line[0m
+$ \$*
+
+EOF
+# }}} input command
+
+
 ### main
 mkdir -p $logdir
 startTime=$(LC_ALL=C date +"%Y-%m-%d %H:%M:%S")
 
+## write input command
+echo $incmd |tee $logdir/$jobname.log
+
 ## trap Ctrl-C etc...
 trap 'after_run 1' 1 2 3 9 15
 
-### run
+## run
 rake -f $rakefile dir="$dir" fin="$fin" cutlen="$cutlen" dbsize="$dbsize" matrix="$matrix" evalue="$evalue" idt="$idt" aalen="$aalen" \
-	twoD="$twoD" method="$method" queue="$queue" ncpus="$ncpus" wtime="$wtime" notree="$notree" 2>&1 |tee $logdir/$jobname.log
+	twoD="$twoD" method="$method" queue="$queue" ncpus="$ncpus" wtime="$wtime" notree="$notree" 2>&1 |tee -a $logdir/$jobname.log
 st=$(( ${PIPESTATUS[0]} + ${PIPESTATUS[1]} ))
 after_run $st
 

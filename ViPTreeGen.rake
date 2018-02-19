@@ -74,9 +74,8 @@ task :default do
 	CheckVersion.call(%w|tblastx makeblastdb R ape phangorn ruby|)
 
 	### shared tasks
-	tasks = %w|
-    01-2.tblastx 01-3.cat_and_rename_split_tblastx 02-1.tblastx_filter 02-2.make_sbed_of_blast 02-3.make_summary_pre 02-4.make_self_tblastx 
-	|
+	tasks = %w|01-2.tblastx 01-3.cat_and_rename_split_tblastx 02-1.tblastx_filter 02-2.make_sbed_of_blast 02-3.make_summary_pre 02-4.make_self_tblastx|
+
 	### add specific tasks
 	if ENV["twoD"] == "" ## not 2D mode
 		if ENV["notree"] == "" ## make tree
@@ -90,8 +89,9 @@ task :default do
 
 	Odir     = ENV["dir"]
 	Fin      = ENV["fin"]
-	Flen     = "#{Odir}/cat/all/query.len"
 	Fin_q    = ENV["twoD"]        # query file in 2D mode
+	Flen     = "#{Odir}/cat/all/query.len"
+	Fa       = "#{Odir}/cat/all/all.fasta"
 
 	Cutlen   = ENV["cutlen"].to_i # default: 100,000
 	DBsize   = ENV["dbsize"]      # default: 200,000,000
@@ -122,7 +122,6 @@ task "01-1.2D.prep_for_tblastx", ["step"] do |t, args|
 	jdir     = "#{Odir}/batch/#{t.name.split(".")[0]}"; mkdir_p jdir
 	odir     = "#{Odir}/cat/all"; mkdir_p odir
 	log      = "#{odir}/all.fasta.makeblastdb.log"
-	fa       = "#{odir}/all.fasta"   # for tblastx. Union of input FASTA and query FASTA
 	outs     = []
 
 	## validate and make copy of input fasta
@@ -161,7 +160,7 @@ task "01-1.2D.prep_for_tblastx", ["step"] do |t, args|
 		}
 	}
 	### write all.fasta
-	open(fa, "w"){ |fall|
+	open(Fa, "w"){ |fall|
 		uniqlab.each_key{ |lab|
 			if q = lab2seq_q[lab] and i = lab2seq_i[lab]
 				### detect same name but different sequence entry
@@ -209,13 +208,13 @@ task "01-1.2D.prep_for_tblastx", ["step"] do |t, args|
 				_out  = "#{n1dir_s}/tblastx.out"
 				_log  = "#{n1dir_s}/tblastx.log"
 				outs << "tblastx -dbsize #{DBsize} -matrix #{Matrix} -max_target_seqs #{Max_target_seqs} -num_threads #{Nthreads} \
-				-evalue #{Evalue} -outfmt 6 -db #{fa} -query #{fspt} -out #{_out} 2>#{_log}".gsub(/\s+/, " ")
+				-evalue #{Evalue} -outfmt 6 -db #{Fa} -query #{fspt} -out #{_out} 2>#{_log}".gsub(/\s+/, " ")
 			end
 		else
 			_out = "#{n1dir}/tblastx.out"
 			_log = "#{n1dir}/tblastx.log"
 			outs << "tblastx -dbsize #{DBsize} -matrix #{Matrix} -max_target_seqs #{Max_target_seqs} -num_threads #{Nthreads} \
-			-evalue #{Evalue} -outfmt 6 -db #{fa} -query #{fque} -out #{_out} 2>#{_log}".gsub(/\s+/, " ")
+			-evalue #{Evalue} -outfmt 6 -db #{Fa} -query #{fque} -out #{_out} 2>#{_log}".gsub(/\s+/, " ")
 		end
 	}
 
@@ -223,7 +222,7 @@ task "01-1.2D.prep_for_tblastx", ["step"] do |t, args|
 	WriteBatch.call(outs, jdir, t)
 
 	## makeblastdb
-	sh "makeblastdb -dbtype nucl -in #{fa} -out #{fa} -title #{File.basename(fa)} 2>#{log}"
+	sh "makeblastdb -dbtype nucl -in #{Fa} -out #{Fa} -title #{File.basename(Fa)} 2>#{log}"
 end
 desc "01-1.prep_for_tblastx"
 task "01-1.prep_for_tblastx", ["step"] do |t, args|
@@ -231,7 +230,6 @@ task "01-1.prep_for_tblastx", ["step"] do |t, args|
 	jdir     = "#{Odir}/batch/#{t.name.split(".")[0]}"; mkdir_p jdir
 	odir     = "#{Odir}/cat/all"; mkdir_p odir
 	log      = "#{odir}/all.fasta.makeblastdb.log"
-	fa       = "#{odir}/all.fasta"
 	outs     = []
 
 	## validate and make copy of input fasta
@@ -293,13 +291,13 @@ task "01-1.prep_for_tblastx", ["step"] do |t, args|
 						_out  = "#{n1dir_s}/tblastx.out"
 						_log  = "#{n1dir_s}/tblastx.log"
 						outs << "tblastx -dbsize #{DBsize} -matrix #{Matrix} -max_target_seqs #{Max_target_seqs} -num_threads #{Nthreads} \
-						-evalue #{Evalue} -outfmt 6 -db #{fa} -query #{fspt} -out #{_out} 2>#{_log}".gsub(/\s+/, " ")
+						-evalue #{Evalue} -outfmt 6 -db #{Fa} -query #{fspt} -out #{_out} 2>#{_log}".gsub(/\s+/, " ")
 					end
 				else
 					_out = "#{n1dir}/tblastx.out"
 					_log = "#{n1dir}/tblastx.log"
 					outs << "tblastx -dbsize #{DBsize} -matrix #{Matrix} -max_target_seqs #{Max_target_seqs} -num_threads #{Nthreads} \
-					-evalue #{Evalue} -outfmt 6 -db #{fa} -query #{fque} -out #{_out} 2>#{_log}".gsub(/\s+/, " ")
+					-evalue #{Evalue} -outfmt 6 -db #{Fa} -query #{fque} -out #{_out} 2>#{_log}".gsub(/\s+/, " ")
 				end
 			}
 		}
@@ -309,7 +307,7 @@ task "01-1.prep_for_tblastx", ["step"] do |t, args|
 	WriteBatch.call(outs, jdir, t)
 
 	## makeblastdb
-	sh "makeblastdb -dbtype nucl -hash_index -parse_seqids -in #{fa} -out #{fa} -title #{File.basename(fa)} 2>#{log}"
+	sh "makeblastdb -dbtype nucl -hash_index -parse_seqids -in #{Fa} -out #{Fa} -title #{File.basename(Fa)} 2>#{log}"
 end
 desc "01-2.tblastx"
 task "01-2.tblastx", ["step"] do |t, args|
@@ -326,13 +324,12 @@ task "01-3.cat_and_rename_split_tblastx", ["step"] do |t, args|
 
 	### set Nodes here
 	Nodes    = IO.readlines(Flen).inject({}){ |h, l| a=l.chomp.split("\t"); h[a[0]] = a[1].to_i; h }
-	fa       = "#{Odir}/cat/all/all.fasta"
 
 	Nodes.each{ |node, len|
 		n1dir = "#{Odir}/node/#{node}/blast"
 		if len > Cutlen
 			%w|tblastx|.each{ |program| 
-				outs << "ruby #{script} #{node} #{program} #{fa} #{n1dir} #{Cutlen}" 
+				outs << "ruby #{script} #{node} #{program} #{Fa} #{n1dir} #{Cutlen}" 
 			}
 		end
 	}
@@ -433,15 +430,7 @@ task "02-4.make_self_tblastx", ["step"] do |t, args|
 		}
 	}
 end
-desc "02-5.make_summary_tsv"
-task "02-5.make_summary_tsv", ["step"] do |t, args|
-	PrintStatus.call(args.step, NumStep, "START", t)
-	script   = "#{File.dirname(__FILE__)}/script/#{t.name}.rb"
-	%w|tblastx|.each{ |type|
-		sh "ruby #{script} #{Flen} #{Odir} #{type}" # output "#{Odir}/node/*/blast/#{type}.summary.tsv"
-	}
-end
-desc "02-5.2D.make_summary_tsv"
+desc "02-5.2D.make_summary_tsv" ### 2D mode
 task "02-5.2D.make_summary_tsv", ["step"] do |t, args|
 	PrintStatus.call(args.step, NumStep, "START", t)
 	script   = "#{File.dirname(__FILE__)}/script/#{t.name}.rb"
@@ -449,6 +438,14 @@ task "02-5.2D.make_summary_tsv", ["step"] do |t, args|
 	flen_i   = "#{Odir}/cat/all/input.len"
 	%w|tblastx|.each{ |type|
 		sh "ruby #{script} #{flen_q} #{flen_i} #{Odir} #{type}" # output "#{Odir}/node/*/blast/#{type}.summary.tsv"
+	}
+end
+desc "02-5.make_summary_tsv" ### normal mode
+task "02-5.make_summary_tsv", ["step"] do |t, args|
+	PrintStatus.call(args.step, NumStep, "START", t)
+	script   = "#{File.dirname(__FILE__)}/script/#{t.name}.rb"
+	%w|tblastx|.each{ |type|
+		sh "ruby #{script} #{Flen} #{Odir} #{type}" # output "#{Odir}/node/*/blast/#{type}.summary.tsv"
 	}
 end
 # }}} tasks 02
