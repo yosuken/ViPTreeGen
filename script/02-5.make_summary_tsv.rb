@@ -9,16 +9,12 @@
 flen, dir, type = ARGV
 header = %w|ID length score SG %.mean.idt %.len|
 
-id2order = {}
 id2info  = {}
-IO.readlines(flen).map{ |l| 
+id2order = {}
+IO.readlines(flen).each{ |l| 
 	id, len = l.chomp.split("\t")
-	id2info[id] = [id, len]
-	[len.to_i, id] 
-}.sort_by{ |len, id| 
-	[len, id] 
-}.each_with_index{ |(len, id), idx|
-	id2order[id] = idx
+	id2info[id]  = [id, len]
+	id2order[id] = [len.to_i, id]
 }
 
 fins   = Dir["#{dir}/node/*/blast/#{type}.summary.pre"]
@@ -34,7 +30,8 @@ fins.each.with_index(1){ |fin, idx|
 		que, sub = a[0..1]
 
 		# USE ONLY HSP of [SHORTER => LONGER]
-		next if id2order[que] > id2order[sub]
+		# next if id2order[que] > id2order[sub]
+		next if id2order[que] <=> id2order[sub] == 1 ### compare [length (as integer), id (in dictionary sort)]
 
 		id2out[que] << a
 		id2out[sub] << a if que != sub
