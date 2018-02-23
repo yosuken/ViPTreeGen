@@ -20,7 +20,7 @@ ViPTreeGen has been developed as a part of [the ViPTree server project](http://w
 
 ## usage 
 ```
-### ViPTreeGen ver 1.1.0 (2018-02-19) ###
+### ViPTreeGen ver 1.1.0 (2018-02-23) ###
 
 [description]
 ViPTreeGen - tool for viral proteomic tree generation from viral genomic sequences.
@@ -89,7 +89,7 @@ $ ViPTreeGen [options] <input fasta> <output dir>
 
   (2D mode)
     result/2D.sim.matrix               -- similarity (SG score) matrix (row-wise: query fasta, column-wise: input fasta)
-    result/top10.sim.list              -- top10 SG scores (and relevant sequences) for each query sequence
+    result/top10.sim.list              -- top10 SG scores for each query sequence. format: 1st column - query ID; from 2nd to 11st columns - ID:SG_score
 ```
 
 ## citation
