@@ -230,6 +230,8 @@ task "01-1.prep_for_tblastx", ["step"] do |t, args|
 	jdir     = "#{Odir}/batch/#{t.name.split(".")[0]}"; mkdir_p jdir
 	odir     = "#{Odir}/cat/all"; mkdir_p odir
 	log      = "#{odir}/all.fasta.makeblastdb.log"
+	fa       = "#{odir}/all.fasta"
+	lab2seq  = {}
 	outs     = []
 
 	## validate and make copy of input fasta
@@ -255,10 +257,12 @@ task "01-1.prep_for_tblastx", ["step"] do |t, args|
 
 				### detect sequence format error
 				raise("\e[1;31mError:\e[0m '#{lab}' is too short (length < 100 nt) included.") if len < 100
-				# raise("\e[1;31mError:\e[0m not acceptable character is detected in sequence of '#{lab}' (allowed characters are 'ACGTRYKMSWBDHVN').") if seq =~ /[^ACGTRYKMSWBDHVN]/i
 				raise("\e[1;31mError:\e[0m sequence name is not uniq. '#{lab}' is found twice in #{fasname}.") if lab2seq[lab]
+				### The rule below might be too strict --> do not use
+				# raise("\e[1;31mError:\e[0m not acceptable character is detected in sequence of '#{lab}' (allowed characters are 'ACGTRYKMSWBDHVN').") if seq =~ /[^ACGTRYKMSWBDHVN]/i
 
 				# store sequence name
+				lab2seq[lab] = seq
 				uniqlab[lab] = 1
 
 				# make cat output
