@@ -1,6 +1,6 @@
 #!/bin/bash
 ###
-### ViPTreeGen ver 1.1.0 (2018-02-15): a tool for viral proteomic tree generation
+### ViPTreeGen ver 1.1.0 (2018-03-30): a tool for viral proteomic tree generation
 ###
 ### Copyright: 2017 (C) Yosuke Nishimura (yosuke@kuicr.kyoto-u.ac.jp)
 ### Licence: MIT license
@@ -10,7 +10,7 @@ PROGNAME=$(basename $0)
 VERSION="1.1.0"
 Errmsg="[1;31m[error][0m"
 Sccmsg="[1;32m[success][0m"
-Modidate="2018-02-23"
+Modidate="2018-03-30"
 incmd="$0 $*"
 
 
@@ -212,20 +212,19 @@ do
 			;;
 	esac
 done
-if [ -z $params ] || [ ${#params[@]} -lt 2 ] ; then
+if [ -z $params ] ; then
 	echo "$Errmsg need 2 arguments" 1>&2
 	echo 
 	echo "$usage" 1>&2
 	exit 1
+elif [ ${#params[@]} -lt 2 ] ; then
+	echo "$Errmsg need 2 arguments" 1>&2
+	exit 1
 elif ! [ -f "${params[0]}" ] ; then
 	echo "$Errmsg  first argument should be a fasta file." 1>&2
-	echo 
-	echo "$usage" 1>&2
 	exit 1
 elif [ -e "${params[1]}" ] ; then
-	echo "$Errmsg  output directory is already exist." 1>&2
-	echo 
-	echo "$usage" 1>&2
+	echo "$Errmsg  output directory already exists." 1>&2
 	exit 1
 fi
 # }}} parse command line
@@ -316,6 +315,10 @@ read -r -d '' incmdlog <<EOF
 [1;32m===== command line[0m
 
 $ $incmd
+
+[1;32m===== log file[0m
+
+$logdir/$jobname.log
 
 EOF
 # }}} input command

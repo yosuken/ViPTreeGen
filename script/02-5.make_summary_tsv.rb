@@ -6,7 +6,7 @@
 #    Initial version: 2017-02-07
 #
 
-flen, dir, type = ARGV
+flen, dir = ARGV
 header = %w|ID length score SG %.mean.idt %.len|
 
 id2info  = {}
@@ -17,7 +17,7 @@ IO.readlines(flen).each{ |l|
 	id2order[id] = [len.to_i, id]
 }
 
-fins   = Dir["#{dir}/node/*/blast/#{type}.summary.pre"]
+fins   = Dir["#{dir}/node/*/blast/tblastx.summary.pre"]
 id2out = Hash.new{ |h, i| h[i] = [] }
 size   = fins.size
 fins.each.with_index(1){ |fin, idx|
@@ -42,7 +42,7 @@ fins.each.with_index(1){ |fin, idx|
 
 # self score for SG
 id2self = {}
-fin1    = "#{dir}/cat/blast/#{type}.self.sum"
+fin1    = "#{dir}/cat/blast/tblastx.self.sum"
 IO.readlines(fin1).each{ |l|
 	id, score   = l.chomp.split("\t")
 	id2self[id] = score.to_f
@@ -63,7 +63,7 @@ fins.each{ |fin|
 		outs << [targ, score, sg, p_idt, p_len]
 	}
 
-	open("#{dir}/node/#{id}/blast/#{type}.summary.tsv", "w"){ |fout|
+	open("#{dir}/node/#{id}/blast/tblastx.summary.tsv", "w"){ |fout|
 		fout.puts header*"\t"
 		outs.sort_by{ |a| -a[2].to_f }.each{ |a| fout.puts [id2info[a[0]], a[1..-1]]*"\t" }
 	}

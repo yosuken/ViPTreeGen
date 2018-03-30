@@ -54,6 +54,8 @@ CheckVersion = lambda do |commands|
 						%|LANG=C R --quiet --no-save --no-restore -e "packageVersion('ape')" 2>&1|
 					when "phangorn"
 						%|LANG=C R --quiet --no-save --no-restore -e "packageVersion('phangorn')" 2>&1|
+					when "parallel"
+						%{LANG=C parallel --version 2>&1 |head -n 1}
 					end
 		puts ""
 		puts "\e[1;32m===== check version: #{command}\e[0m"
@@ -70,10 +72,7 @@ end
 
 # {{{ default (run all tasks)
 task :default do
-	### check version
-	CheckVersion.call(%w|tblastx makeblastdb R ape phangorn ruby|)
-
-	### shared tasks
+	### define shared tasks
 	tasks = %w|01-2.tblastx 01-3.cat_and_rename_split_tblastx 02-1.tblastx_filter 02-2.make_sbed_of_blast 02-3.make_summary_pre 02-4.make_self_tblastx|
 
 	### add specific tasks
@@ -87,16 +86,19 @@ task :default do
 		tasks = %w|01-1.2D.prep_for_tblastx| + tasks + %w|02-5.2D.make_summary_tsv 03-1.2D.make_matrix| ## add 2D tasks
 	end
 
+	### constants
 	Odir     = ENV["dir"]
-	Fin      = ENV["fin"]
-	Fin_q    = ENV["twoD"]        # query file in 2D mode
-	Flen     = "#{Odir}/cat/all/query.len"
-	Fa       = "#{Odir}/cat/all/all.fasta"
+	Fin      = ENV["fin"]                  ## input file when 2D & normal mode
+	Fin_q    = ENV["twoD"]                 ## query file only when 2D mode
+	Flen     = "#{Odir}/cat/all/all.len"   ## create when 2D & normal mode
+	Flen_q   = "#{Odir}/cat/all/query.len" ## create only when 2D mode
+	Flen_i   = "#{Odir}/cat/all/input.len" ## create only when 2D mode
+	Fa       = "#{Odir}/cat/all/all.fasta" ## create when 2D & normal mode
 
-	Cutlen   = ENV["cutlen"].to_i # default: 100,000
-	DBsize   = ENV["dbsize"]      # default: 200,000,000
-	Matrix   = ENV["matrix"]      # default: BLOSUM45
-	Evalue   = ENV["evalue"]      # default: 1e-2
+	Cutlen   = ENV["cutlen"].to_i ## default: 100,000
+	DBsize   = ENV["dbsize"]      ## default: 200,000,000
+	Matrix   = ENV["matrix"]      ## default: BLOSUM45
+	Evalue   = ENV["evalue"]      ## default: 1e-2
 	Nthreads = "1".to_i              
 	Mem      = Nthreads * 12
 	Qname    = ENV["queue"]||""
@@ -107,6 +109,12 @@ task :default do
 
 	TreeMethod = ENV["method"]||"bionj"
 
+	### check version
+	commands  = %w|tblastx makeblastdb R ape phangorn ruby|
+	commands += %w|parallel| if Ncpus != ""
+	CheckVersion.call(commands)
+
+	### run
 	NumStep  = tasks.size
 	tasks.each.with_index(1){ |task, idx|
 		Rake::Task[task].invoke(idx)
@@ -152,27 +160,30 @@ task "01-1.2D.prep_for_tblastx", ["step"] do |t, args|
 			### detect sequence format error
 			raise("\e[1;31mError:\e[0m '#{lab}' is too short (length < 100 nt) included.") if len < 100
 			# raise("\e[1;31mError:\e[0m not acceptable character is detected in sequence of '#{lab}' (allowed characters are 'ACGTRYKMSWBDHVN').") if seq =~ /[^ACGTRYKMSWBDHVN]/i
-			raise("\e[1;31mError:\e[0m sequence name is not uniq. '#{lab}' is found twice in #{fasname}.") if lab2seq[lab]
+			raise("\e[1;31mError:\e[0m sequence name is not uniq. '#{lab}' is found multiple times in #{fasname}.") if lab2seq[lab]
 
 			# store sequence name
 			lab2seq[lab] = seq
 			uniqlab[lab] = 1
 		}
 	}
-	### write all.fasta
+	### write all.fasta & all.len
 	open(Fa, "w"){ |fall|
-		uniqlab.each_key{ |lab|
-			if q = lab2seq_q[lab] and i = lab2seq_i[lab]
-				### detect same name but different sequence entry
-				raise("\e[1;31mError:\e[0m same name entries are included in both input FASTA and query FASTA, but the sequences differ.") if q != i
-			end
-			out = [">"+lab, (lab2seq_q[lab]||lab2seq_i[lab]).scan(/.{1,70}/)]
-			fall.puts out
+		open(Flen, "w"){ |flen_a|
+			uniqlab.each_key{ |lab|
+				if q = lab2seq_q[lab] and i = lab2seq_i[lab]
+					### detect same name but different sequence entry
+					raise("\e[1;31mError:\e[0m same name entries are included in both input FASTA and query FASTA, but the sequences differ.") if q != i
+				end
+				seq = lab2seq_q[lab]||lab2seq_i[lab]
+				fall.puts [">"+lab, seq.scan(/.{1,70}/)]
+				flen_a.puts [lab, seq.size]*"\t"
+			}
 		}
 	}
 	### write input.len & query.len
-	open("#{odir}/input.len", "w"){ |flen_i|
-		open("#{odir}/query.len", "w"){ |flen_q|
+	open(Flen_i, "w"){ |flen_i|
+		open(Flen_q, "w"){ |flen_q|
 			[lab2seq_q, lab2seq_i].zip([flen_q, flen_i]){ |lab2seq, flen|
 				lab2seq.each{ |lab, seq|
 					flen.puts [lab, seq.size]*"\t"
@@ -181,41 +192,57 @@ task "01-1.2D.prep_for_tblastx", ["step"] do |t, args|
 		}
 	}
 
-	### write node fasta
-	lab2seq_q.each{ |lab, seq|
-		len   = seq.size
-		n0dir = "#{Odir}/node/#{lab}/seq";   mkdir_p n0dir
-		n1dir = "#{Odir}/node/#{lab}/blast"; mkdir_p n1dir
+	### write node/input fasta
+	[lab2seq_q, lab2seq_i].zip(%w|node input|){ |lab2seq, type|
+		lab2seq.each{ |lab, seq|
+			len   = seq.size
+			n0dir = "#{Odir}/#{type}/#{lab}/seq";   mkdir_p n0dir
+			n1dir = "#{Odir}/#{type}/#{lab}/blast"; mkdir_p n1dir
 
-		fque = "#{n0dir}/#{lab}.fasta"
-		open(fque, "w"){ |_fque|
-			_fque.puts [">"+lab, seq.scan(/.{1,70}/)]
-		}
+			fque = "#{n0dir}/#{lab}.fasta"
+			open(fque, "w"){ |_fque|
+				_fque.puts [">"+lab, seq.scan(/.{1,70}/)]
+			}
 
-		if len > Cutlen
-			n0dir_s = "#{n0dir}/split"; mkdir_p n0dir_s
-
-			idx = 0
-			while seq and seq.size > 0
-				idx += 1
-				subseq, seq = seq[0, Cutlen], seq[Cutlen..-1]
-				fspt = "#{n0dir_s}/#{idx}.fasta"
-				open(fspt, "w"){ |_fspt|
-					_fspt.puts [">#{idx}", subseq.scan(/.{1,70}/)]
-				}
-
-				n1dir_s = "#{n1dir}/split/#{idx}"; mkdir_p n1dir_s
-				_out  = "#{n1dir_s}/tblastx.out"
-				_log  = "#{n1dir_s}/tblastx.log"
-				outs << "tblastx -dbsize #{DBsize} -matrix #{Matrix} -max_target_seqs #{Max_target_seqs} -num_threads #{Nthreads} \
-				-evalue #{Evalue} -outfmt 6 -db #{Fa} -query #{fspt} -out #{_out} 2>#{_log}".gsub(/\s+/, " ")
+			if type == "input" ## make blastdb for each input sequence to compute self score
+				sh "makeblastdb -dbtype nucl -in #{fque} -out #{fque} -title #{File.basename(fque)} 2>#{fque}.makeblastdb.log"
 			end
-		else
-			_out = "#{n1dir}/tblastx.out"
-			_log = "#{n1dir}/tblastx.log"
-			outs << "tblastx -dbsize #{DBsize} -matrix #{Matrix} -max_target_seqs #{Max_target_seqs} -num_threads #{Nthreads} \
-			-evalue #{Evalue} -outfmt 6 -db #{Fa} -query #{fque} -out #{_out} 2>#{_log}".gsub(/\s+/, " ")
-		end
+
+			if len > Cutlen
+				n0dir_s = "#{n0dir}/split"; mkdir_p n0dir_s
+
+				idx = 0
+				while seq and seq.size > 0
+					idx += 1
+					subseq, seq = seq[0, Cutlen], seq[Cutlen..-1]
+					fspt = "#{n0dir_s}/#{idx}.fasta"
+					open(fspt, "w"){ |_fspt|
+						_fspt.puts [">#{idx}", subseq.scan(/.{1,70}/)]
+					}
+
+					n1dir_s = "#{n1dir}/split/#{idx}"; mkdir_p n1dir_s
+					_out  = "#{n1dir_s}/tblastx.out"
+					_log  = "#{n1dir_s}/tblastx.log"
+					if type == "input"
+						outs << "tblastx -dbsize #{DBsize} -matrix #{Matrix} -max_target_seqs #{Max_target_seqs} -num_threads #{Nthreads} \
+						-evalue #{Evalue} -outfmt 6 -db #{fque} -query #{fspt} -out #{_out} 2>#{_log}".gsub(/\s+/, " ")
+					else
+						outs << "tblastx -dbsize #{DBsize} -matrix #{Matrix} -max_target_seqs #{Max_target_seqs} -num_threads #{Nthreads} \
+						-evalue #{Evalue} -outfmt 6 -db #{Fa} -query #{fspt} -out #{_out} 2>#{_log}".gsub(/\s+/, " ")
+					end
+				end
+			else
+				_out = "#{n1dir}/tblastx.out"
+				_log = "#{n1dir}/tblastx.log"
+				if type == "input"
+					outs << "tblastx -dbsize #{DBsize} -matrix #{Matrix} -max_target_seqs #{Max_target_seqs} -num_threads #{Nthreads} \
+					-evalue #{Evalue} -outfmt 6 -db #{fque} -query #{fque} -out #{_out} 2>#{_log}".gsub(/\s+/, " ")
+				else
+					outs << "tblastx -dbsize #{DBsize} -matrix #{Matrix} -max_target_seqs #{Max_target_seqs} -num_threads #{Nthreads} \
+					-evalue #{Evalue} -outfmt 6 -db #{Fa} -query #{fque} -out #{_out} 2>#{_log}".gsub(/\s+/, " ")
+				end
+			end
+		}
 	}
 
 	## write batch file
@@ -235,7 +262,7 @@ task "01-1.prep_for_tblastx", ["step"] do |t, args|
 	outs     = []
 
 	## validate and make copy of input fasta
-	open("#{odir}/query.len", "w"){ |flen|
+	open(Flen, "w"){ |flen|
 		open(fa, "w"){ |fall|
 			fasta_str = IO.read(Fin)
 
@@ -327,16 +354,26 @@ task "01-3.cat_and_rename_split_tblastx", ["step"] do |t, args|
 	outs     = []
 
 	### set Nodes here
-	Nodes    = IO.readlines(Flen).inject({}){ |h, l| a=l.chomp.split("\t"); h[a[0]] = a[1].to_i; h }
+	if File.exist?(Flen_i) ## 2D mode
+		Nodes    = IO.readlines(Flen_q).inject({}){ |h, l| a=l.chomp.split("\t"); h[a[0]] = a[1].to_i; h }
+		Nodes_i  = IO.readlines(Flen_i).inject({}){ |h, l| a=l.chomp.split("\t"); h[a[0]] = a[1].to_i; h }
+	else ## normal mode
+		Nodes    = IO.readlines(Flen  ).inject({}){ |h, l| a=l.chomp.split("\t"); h[a[0]] = a[1].to_i; h }
+		Nodes_i  = {}
+	end
 
-	Nodes.each{ |node, len|
-		n1dir = "#{Odir}/node/#{node}/blast"
-		if len > Cutlen
-			%w|tblastx|.each{ |program| 
-				outs << "ruby #{script} #{node} #{program} #{Fa} #{n1dir} #{Cutlen}" 
-			}
-		end
+	[Nodes, Nodes_i].zip(%w|node input|){ |nodes, type|
+		### Nodes_i --> for 2D mode only
+		nodes.each{ |node, len|
+			n1dir = "#{Odir}/#{type}/#{node}/blast"
+			if len > Cutlen
+				%w|tblastx|.each{ |program| 
+					outs << "ruby #{script} #{node} #{program} #{Fa} #{n1dir} #{Cutlen}" 
+				}
+			end
+		}
 	}
+
 	WriteBatch.call(outs, jdir, t)
 	RunBatch.call(jdir, Qname, Nthreads, Mem, Wtime, Ncpus)
 end
@@ -353,16 +390,19 @@ task "02-1.tblastx_filter", ["step"] do |t, args|
 	jdir     = "#{Odir}/batch/#{t.name.split(".")[0]}"; mkdir_p jdir
 	outs     = []
 
-	Nodes.each{ |node, len|
-		n1dir = "#{Odir}/node/#{node}/blast"
-		if len > Cutlen
-			path = "#{n1dir}/split/*/tblastx.out2" # query names and postions are arranged by 01-3
-		else
-			path = "#{n1dir}/tblastx.out"
-		end
-		Dir[path].each{ |fin|
-			fout = "#{fin.gsub(/2$/, "")}.filtered" # tblastx.out2 => tblastx.out.filtered
-			outs << "ruby #{script} #{fin} #{fout} #{idt} #{aalen}"
+	[Nodes, Nodes_i].zip(%w|node input|){ |nodes, type|
+		### Nodes_i --> for 2D mode only
+		nodes.each{ |node, len|
+			n1dir = "#{Odir}/#{type}/#{node}/blast"
+			if len > Cutlen
+				path = "#{n1dir}/split/*/tblastx.out2" # query names and postions are arranged by 01-3
+			else
+				path = "#{n1dir}/tblastx.out"
+			end
+			Dir[path].each{ |fin|
+				fout = "#{fin.gsub(/2$/, "")}.filtered" # tblastx.out2 => tblastx.out.filtered
+				outs << "ruby #{script} #{fin} #{fout} #{idt} #{aalen}"
+			}
 		}
 	}
 	WriteBatch.call(outs, jdir, t)
@@ -375,16 +415,17 @@ task "02-2.make_sbed_of_blast", ["step"] do |t, args|
 	jdir     = "#{Odir}/batch/#{t.name.split(".")[0]}"; mkdir_p jdir
 	outs     = []
 
-	Nodes.each{ |node, len|
-		n1dir = "#{Odir}/node/#{node}/blast"
-		%w|tblastx|.zip([".filtered"]){ |type, suffix|
+	[Nodes, Nodes_i].zip(%w|node input|){ |nodes, type|
+		### Nodes_i --> for 2D mode only
+		nodes.each{ |node, len|
+			n1dir = "#{Odir}/#{type}/#{node}/blast"
 			if len > Cutlen
-				path = "#{n1dir}/split/*/#{type}.out#{suffix}"
+				path = "#{n1dir}/split/*/tblastx.out.filtered"
 			else
-				path = "#{n1dir}/#{type}.out#{suffix}"
+				path = "#{n1dir}/tblastx.out.filtered"
 			end
 			Dir[path].each{ |fin|
-				sbed = "#{File.dirname(fin)}/#{type}.sbed#{suffix}"
+				sbed = "#{File.dirname(fin)}/tblastx.sbed.filtered"
 				#next if File.exist?(sbed) and !(File.zero?(sbed))
 				outs << "ruby #{script} #{fin} #{sbed}" # --additional 12 --sort --scoring identity"
 			}
@@ -400,12 +441,12 @@ task "02-3.make_summary_pre", ["step"] do |t, args|
 	jdir     = "#{Odir}/batch/#{t.name.split(".")[0]}"; mkdir_p jdir
 	outs     = []
 
-	Nodes.each{ |node, len|
-		n1dir = "#{Odir}/node/#{node}/blast"
-		%w|tblastx|.zip([".filtered"]){ |type, suffix|
-			filename = "#{type}.sbed#{suffix}"
-			fout  = "#{n1dir}/#{type}.summary.pre"
-			outs << "ruby #{script} #{n1dir} #{fout} #{node} #{Flen} #{filename}"
+	[Nodes, Nodes_i].zip(%w|node input|){ |nodes, type|
+		### Nodes_i --> for 2D mode only
+		nodes.each{ |node, len|
+			n1dir = "#{Odir}/#{type}/#{node}/blast"
+			fout  = "#{n1dir}/tblastx.summary.pre"
+			outs << "ruby #{script} #{n1dir} #{fout} #{node} #{Flen}"
 		}
 	}
 	WriteBatch.call(outs, jdir, t)
@@ -417,19 +458,18 @@ task "02-4.make_self_tblastx", ["step"] do |t, args|
 	bdir     = "#{Odir}/cat/blast"; mkdir_p bdir
 	outs     = []
 
-	%w|tblastx|.each{ |type|
-		id2self = {}
-		open("#{bdir}/#{type}.self.sum", "w"){ |fout|
-			Dir["#{Odir}/node/*/blast/#{type}.summary.pre"].each{ |fin|
-				id = fin.split("/")[2]
+	node2self = {}
+	open("#{bdir}/tblastx.self.sum", "w"){ |fout|
+		[Nodes, Nodes_i].zip(%w|node input|){ |nodes, type|
+			### Nodes_i --> for 2D mode only
+			nodes.each{ |node, len|
+				fin = "#{Odir}/#{type}/#{node}/blast/tblastx.summary.pre"
+				next unless File.exist?(fin)
 				IO.readlines(fin)[1..-1].each{ |l|
 					a = l.chomp.split("\t")
-					id2self[id] = (a[4].to_i + a[5].to_i) * 0.5 if a[2] == a[3] # que == sub
+					node2self[node] = (a[4].to_i + a[5].to_i) * 0.5 if a[2] == a[3] # que == sub
 				}
-			}
-			IO.readlines(Flen).each{ |l|
-				id = l.chomp.split("\t")[0]
-				fout.puts [id, id2self[id]]*"\t"
+				fout.puts [node, node2self[node]]*"\t"
 			}
 		}
 	}
@@ -438,19 +478,13 @@ desc "02-5.2D.make_summary_tsv" ### 2D mode
 task "02-5.2D.make_summary_tsv", ["step"] do |t, args|
 	PrintStatus.call(args.step, NumStep, "START", t)
 	script   = "#{File.dirname(__FILE__)}/script/#{t.name}.rb"
-	flen_q   = "#{Odir}/cat/all/query.len"
-	flen_i   = "#{Odir}/cat/all/input.len"
-	%w|tblastx|.each{ |type|
-		sh "ruby #{script} #{flen_q} #{flen_i} #{Odir} #{type}" # output "#{Odir}/node/*/blast/#{type}.summary.tsv"
-	}
+	sh "ruby #{script} #{Flen} #{Odir}" # output "#{Odir}/node/*/blast/tblastx.summary.tsv"
 end
 desc "02-5.make_summary_tsv" ### normal mode
 task "02-5.make_summary_tsv", ["step"] do |t, args|
 	PrintStatus.call(args.step, NumStep, "START", t)
 	script   = "#{File.dirname(__FILE__)}/script/#{t.name}.rb"
-	%w|tblastx|.each{ |type|
-		sh "ruby #{script} #{Flen} #{Odir} #{type}" # output "#{Odir}/node/*/blast/#{type}.summary.tsv"
-	}
+	sh "ruby #{script} #{Flen} #{Odir}" # output "#{Odir}/node/*/blast/tblastx.summary.tsv"
 end
 # }}} tasks 02
 
@@ -460,52 +494,50 @@ desc "03-1.2D.make_matrix"
 task "03-1.2D.make_matrix", ["step"] do |t, args|
 	PrintStatus.call(args.step, NumStep, "START", t)
 	rdir = "#{Odir}/result"; mkdir_p rdir
-	qids = IO.readlines("#{Odir}/cat/all/query.len").map{ |l| l.chomp.split("\t")[0] }
-	tids = IO.readlines("#{Odir}/cat/all/input.len").map{ |l| l.chomp.split("\t")[0] }
+	qids = Nodes.keys
+	tids = Nodes_i.keys
 
-	%w|tblastx|.each{ |type|
-		similarities = Hash.new{ |h, i| h[i] = Hash.new(0.0) }
-		qids.each{ |id1|
-			fin = "#{Odir}/node/#{id1}/blast/#{type}.summary.tsv"
-			IO.readlines(fin)[1..-1].each{ |l|
-				sim, id2 = l.chomp.split("\t").values_at(3, 0)
-				similarities[id1][id2] = sim.to_f
-				similarities[id2][id1] = sim.to_f
-			}
+	similarities = Hash.new{ |h, i| h[i] = Hash.new(0.0) }
+	qids.each{ |id1|
+		fin = "#{Odir}/node/#{id1}/blast/tblastx.summary.tsv"
+		IO.readlines(fin)[1..-1].each{ |l|
+			sim, id2 = l.chomp.split("\t").values_at(3, 0)
+			similarities[id1][id2] = sim.to_f
+			similarities[id2][id1] = sim.to_f
 		}
+	}
 
-		outs = []
-		qids.each{ |id1|
-			out = [id1]
-			tids.each{ |id2|
-				s = id1 == id2 ? 1 : similarities[id1][id2]
-				s = s == 0 ? "0" : (s == 1 ? "1" : "%.4f" % s)
-				out << s
-			}
-			outs << out
+	outs = []
+	qids.each{ |id1|
+		out = [id1]
+		tids.each{ |id2|
+			s = id1 == id2 ? 1 : similarities[id1][id2]
+			s = s == 0 ? "0" : (s == 1 ? "1" : "%.4f" % s)
+			out << s
 		}
-		open("#{rdir}/2D.sim.matrix", "w"){ |fout|
-			fout.puts ["", tids]*"\t"
-			outs.each{ |out|
-				fout.puts out*"\t"
-			}
+		outs << out
+	}
+	open("#{rdir}/2D.sim.matrix", "w"){ |fout|
+		fout.puts ["", tids]*"\t"
+		outs.each{ |out|
+			fout.puts out*"\t"
 		}
-		open("#{rdir}/top10.sim.list", "w"){ |fout|
-			outs.each{ |out|
-				query, *scores = out
-				score2tids = Hash.new{ |h, i| h[i] = [] }
-				tids.zip(scores){ |tid, score|
-					score2tids[score] << tid
-				}
-				a = []
-				score2tids.sort_by{ |score, tids| -score.to_f }.each{ |score, tids|
-					tids.each{ |tid|
-						break if a.size >= 10
-						a << "#{tid}:#{score}"
-					}
-				}
-				fout.puts [query, a]*"\t"
+	}
+	open("#{rdir}/top10.sim.list", "w"){ |fout|
+		outs.each{ |out|
+			query, *scores = out
+			score2tids = Hash.new{ |h, i| h[i] = [] }
+			tids.zip(scores){ |tid, score|
+				score2tids[score] << tid
 			}
+			a = []
+			score2tids.sort_by{ |score, tids| -score.to_f }.each{ |score, tids|
+				tids.each{ |tid|
+					break if a.size >= 10
+					a << "#{tid}:#{score}"
+				}
+			}
+			fout.puts [query, a]*"\t"
 		}
 	}
 end
@@ -515,36 +547,34 @@ task "03-1.make_matrix", ["step"] do |t, args|
 	rdir = "#{Odir}/result"; mkdir_p rdir
 	ids  = Nodes.keys
 
-	%w|tblastx|.each{ |type|
-		similarities = Hash.new{ |h, i| h[i] = Hash.new(0.0) }
-		fout1   = open("#{rdir}/all.sim.matrix", "w")
-		fout2   = open("#{rdir}/all.dist.matrix", "w")
+	similarities = Hash.new{ |h, i| h[i] = Hash.new(0.0) }
+	fout1   = open("#{rdir}/all.sim.matrix", "w")
+	fout2   = open("#{rdir}/all.dist.matrix", "w")
 
-		ids.each{ |id1|
-			fin = "#{Odir}/node/#{id1}/blast/#{type}.summary.tsv"
-			IO.readlines(fin)[1..-1].each{ |l|
-				sim, id2 = l.chomp.split("\t").values_at(3, 0)
-				similarities[id1][id2] = sim.to_f
-			}
+	ids.each{ |id1|
+		fin = "#{Odir}/node/#{id1}/blast/tblastx.summary.tsv"
+		IO.readlines(fin)[1..-1].each{ |l|
+			sim, id2 = l.chomp.split("\t").values_at(3, 0)
+			similarities[id1][id2] = sim.to_f
 		}
-
-		[fout1, fout2].each{ |fout| fout.puts ["", ids]*"\t" }
-		ids.each{ |id1|
-			out1 = [id1]
-			out2 = [id1]
-			ids.each{ |id2|
-				s = similarities[id1][id2]
-				s = s == 0 ? "0" : (s == 1 ? "1" : "%.4f" % s)
-				t = 1 - similarities[id1][id2]
-				t = t == 0 ? "0" : (t == 1 ? "1" : "%.4f" % t)
-				out1 << s
-				out2 << t
-			}
-			fout1.puts out1*"\t"
-			fout2.puts out2*"\t"
-		}
-		[fout1, fout2].each{ |fout| fout.close }
 	}
+
+	[fout1, fout2].each{ |fout| fout.puts ["", ids]*"\t" }
+	ids.each{ |id1|
+		out1 = [id1]
+		out2 = [id1]
+		ids.each{ |id2|
+			s = similarities[id1][id2]
+			s = s == 0 ? "0" : (s == 1 ? "1" : "%.4f" % s)
+			t = 1 - similarities[id1][id2]
+			t = t == 0 ? "0" : (t == 1 ? "1" : "%.4f" % t)
+			out1 << s
+			out2 << t
+		}
+		fout1.puts out1*"\t"
+		fout2.puts out2*"\t"
+	}
+	[fout1, fout2].each{ |fout| fout.close }
 end
 desc "03-2.matrix_to_nj"
 task "03-2.matrix_to_nj", ["step"] do |t, args|

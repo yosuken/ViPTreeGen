@@ -6,8 +6,7 @@
 #    Initial version: 2017-02-07
 #
 
-# fin, fout, node, flen = ARGV
-n1dir, fout, node, flen, filename = ARGV
+n1dir, fout, node, flen = ARGV
 fout = open(fout, "w")
 
 id2len = {}
@@ -18,7 +17,7 @@ lab2sub_pos_scr = Hash.new{ |h, i| h[i] = {} } # lab2sub_pos_scr[lab] = { sub_ra
 lab2que_pos_idt = Hash.new{ |h, i| h[i] = {} } # lab2que_pos_idt[lab] = { que_range => identity }
 lab2que_pos_scr = Hash.new{ |h, i| h[i] = {} } # lab2que_pos_scr[lab] = { que_range => score    }
 
-fins = File.exist?("#{n1dir}/#{filename}") ? ["#{n1dir}/#{filename}"] : Dir["#{n1dir}/split/*/#{filename}"]
+fins = File.exist?("#{n1dir}/tblastx.sbed.filtered") ? ["#{n1dir}/tblastx.sbed.filtered"] : Dir["#{n1dir}/split/*/tblastx.sbed.filtered"]
 fins.each{ |fin|
 	IO.readlines(fin).each{ |l|
 		lab, start, stop, que, identity, strand, score = l.chomp.split("\t")
