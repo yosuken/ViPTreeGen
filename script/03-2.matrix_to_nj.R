@@ -18,6 +18,9 @@
 library(ape)
 library(phangorn)
 
+## augument maximum number of nested expressions that will be evaluated (to avoid 'Error: evaluation nested too deeply').
+options(expressions=20000)
+
 ## args
 args <- commandArgs(trailingOnly = TRUE)
 
