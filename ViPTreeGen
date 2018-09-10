@@ -1,13 +1,13 @@
 #!/bin/bash
 ###
-### ViPTreeGen ver 1.1.0 (2018-03-30): a tool for viral proteomic tree generation
+### ViPTreeGen ver 1.1.2 (2018-09-10): a tool for viral proteomic tree generation
 ###
 ### Copyright: 2017 (C) Yosuke Nishimura (yosuke@kuicr.kyoto-u.ac.jp)
 ### Licence: MIT license
 ###
 
 PROGNAME=$(basename $0)
-VERSION="1.1.1"
+VERSION="1.1.2"
 Errmsg="[1;31m[error][0m"
 Sccmsg="[1;32m[success][0m"
 Modidate="2018-04-17"
