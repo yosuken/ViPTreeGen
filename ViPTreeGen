@@ -320,6 +320,10 @@ $ $incmd
 
 $logdir/$jobname.log
 
+[1;32m===== check version: $PROGNAME[0m
+
+$VERSION
+
 EOF
 # }}} input command
 

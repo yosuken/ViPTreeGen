@@ -29,6 +29,7 @@ IO.read(fa).split(/^>/)[1..-1].each_with_index{ |ent, idx|
 	lab, *seq = ent.split("\n") 
 	order[lab] = idx
 }
+
 open("#{n1dir}/#{program}.out", "w"){ |fout|
 	out.sort_by{ |a| [order[a[1]], a[10].to_f] }.each{ |a| fout.puts a*"\t" }
 }

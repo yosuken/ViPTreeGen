@@ -131,6 +131,7 @@ task "01-1.2D.prep_for_tblastx", ["step"] do |t, args|
 	odir     = "#{Odir}/cat/all"; mkdir_p odir
 	log      = "#{odir}/all.fasta.makeblastdb.log"
 	outs     = []
+	puts ""
 
 	## validate and make copy of input fasta
 	fasta_str_q = IO.read(Fin_q)
@@ -152,10 +153,24 @@ task "01-1.2D.prep_for_tblastx", ["step"] do |t, args|
 			len = seq.size
 
 			# take only label from comment line
-			lab = lab.split(/\s+/)[0]
+			_lab = lab.split(/\s+/)[0]
 
 			# label validation and modification
-			lab = lab.gsub(/[^0-9a-zA-Z\_\-\.]/, "_")
+			not_allowed_pattern = /[^a-zA-Z0-9\-\.\_]/
+			lab = _lab.gsub(not_allowed_pattern, "_") # modify signs to underscores
+
+			### change hyphen and dots in start/end to underscore (begins with ".", "-" --> linux system problem, end with "." --> tblastx subject name problem ["abc." -> "abc"]), end with "___" --> ape/phangorn bionj generation problem ["abc___" -> "abc_"]
+			not_allowed_pattern_pre = /^[\.\-\_]+/
+			not_allowed_pattern_suf = /[\.\-\_]+$/
+			not_allowed_pattern_dot = /(\.)[\.]+/
+			not_allowed_pattern_hyp = /(\-)[\-]+/
+			not_allowed_pattern_und = /(\_)[\_]+/
+			## remove "." to "_" if the position is in the start / end  (issue in tblastx and tree generation step)
+			## remove sequential "." or "-" or "_" (issue in bionj generation)
+			lab = lab.gsub(not_allowed_pattern_pre, "").gsub(not_allowed_pattern_suf, "").gsub(not_allowed_pattern_dot, '\1').gsub(not_allowed_pattern_hyp, '\1').gsub(not_allowed_pattern_und, '\1')
+
+			### label modification log
+			puts "### [!] #{_lab} is changed to #{lab}" if _lab != lab
 
 			### detect sequence format error
 			raise("\e[1;31mError:\e[0m '#{lab}' is too short (length < 100 nt) included.") if len < 100
@@ -260,6 +275,7 @@ task "01-1.prep_for_tblastx", ["step"] do |t, args|
 	fa       = "#{odir}/all.fasta"
 	lab2seq  = {}
 	outs     = []
+	puts ""
 
 	## validate and make copy of input fasta
 	open(Flen, "w"){ |flen|
@@ -277,10 +293,24 @@ task "01-1.prep_for_tblastx", ["step"] do |t, args|
 				len  = seq.size
 
 				# take only label from comment line
-				lab = lab.split[0]
+				_lab = lab.split(/\s+/)[0]
 
 				# label validation and modification
-				lab = lab.gsub(/[^0-9a-zA-Z\_\-\.]/, "_")
+				not_allowed_pattern = /[^a-zA-Z0-9\-\.\_]/
+				lab = _lab.gsub(not_allowed_pattern, "_") # modify signs to underscores
+
+				### change hyphen and dots in start/end to underscore (begins with ".", "-" --> linux system problem, end with "." --> tblastx subject name problem ["abc." -> "abc"]), end with "___" --> ape/phangorn bionj generation problem ["abc___" -> "abc_"]
+				not_allowed_pattern_pre = /^[\.\-\_]+/
+				not_allowed_pattern_suf = /[\.\-\_]+$/
+				not_allowed_pattern_dot = /(\.)[\.]+/
+				not_allowed_pattern_hyp = /(\-)[\-]+/
+				not_allowed_pattern_und = /(\_)[\_]+/
+				## remove "." to "_" if the position is in the start / end  (issue in tblastx and tree generation step)
+				## remove sequential "." or "-" or "_" (issue in bionj generation)
+				lab = lab.gsub(not_allowed_pattern_pre, "").gsub(not_allowed_pattern_suf, "").gsub(not_allowed_pattern_dot, '\1').gsub(not_allowed_pattern_hyp, '\1').gsub(not_allowed_pattern_und, '\1')
+
+				### label modification log
+				puts "### [!] #{_lab} is changed to #{lab}" if _lab != lab
 
 				### detect sequence format error
 				raise("\e[1;31mError:\e[0m '#{lab}' is too short (length < 100 nt) included.") if len < 100

@@ -48,7 +48,7 @@ IO.readlines(fin1).each{ |l|
 }
 
 fins.each{ |fin|
-	id = fin.split("/")[2]
+	id = fin.split("/")[-3]
 	outs = []
 	id2out[id].each{ |a|
 		a = a.values_at(0..3, 8..11) # q, s, q_scr, s_scr, q_%idt, s_%idt, q_%len, s_%len
