@@ -368,7 +368,8 @@ task "01-1.prep_for_tblastx", ["step"] do |t, args|
 	WriteBatch.call(outs, jdir, t)
 
 	## makeblastdb
-	sh "makeblastdb -dbtype nucl -hash_index -parse_seqids -in #{Fa} -out #{Fa} -title #{File.basename(Fa)} 2>#{log}"
+  # sh "makeblastdb -dbtype nucl -hash_index -parse_seqids -in #{Fa} -out #{Fa} -title #{File.basename(Fa)} 2>#{log}" ## cause error if long name is given (e.g. >Family3_GokushovirinaeB_Zuo_F3_NODE_2597_length_5174_cov_4587029)
+	sh "makeblastdb -dbtype nucl -in #{Fa} -out #{Fa} -title #{File.basename(Fa)} 2>#{log}"
 end
 desc "01-2.tblastx"
 task "01-2.tblastx", ["step"] do |t, args|

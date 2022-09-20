@@ -11,3 +11,9 @@
 *.swp
 *~
 .nfs*
+
+### gitignore
+.git*
+
+### test input and output directory
+/test*
