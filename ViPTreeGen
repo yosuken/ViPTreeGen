@@ -1,16 +1,16 @@
 #!/bin/bash
 ###
-### ViPTreeGen ver 1.1.2 (2018-09-10): a tool for viral proteomic tree generation
+### ViPTreeGen ver 1.1.4 (2026-05-16): a tool for viral proteomic tree generation
 ###
 ### Copyright: 2017 (C) Yosuke Nishimura (yosuke@kuicr.kyoto-u.ac.jp)
 ### Licence: MIT license
 ###
 
 PROGNAME=$(basename $0)
-VERSION="1.1.2"
+VERSION="1.1.4"
 Errmsg="[1;31m[error][0m"
 Sccmsg="[1;32m[success][0m"
-Modidate="2018-04-17"
+Modidate="2026-05-16"
 incmd="$0 $*"
 
 
@@ -42,7 +42,7 @@ $ $PROGNAME [options] <input fasta> <output dir>
 [1;32m[dependencies][0m
     - tblastx              -- included in the BLAST+ program;
                               https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download
-    - ruby (ver >=2.0) 
+    - ruby (ver >=2.0, including 4.x)
 
   (for tree generation)
     - R (ver >=3.0)
@@ -245,9 +245,9 @@ if [ -z $notree ]; then
 		{ echo >&2 "$Errmsg R package 'phangorn' must be installed but not available.  Aborting."; exit 1; }
 fi
 
-### check ruby version
-ST=`ruby -e 'print RUBY_VERSION.to_f >= 2.0 ? 0 : 1'`
-if [ $ST -ne 0 ]; then 
+### check ruby version (>= 2.0; tested with 2.x/3.x/4.x)
+ST=`ruby -e 'exit (Gem::Version.new(RUBY_VERSION) >= Gem::Version.new("2.0.0")) ? 0 : 1' 2>/dev/null; echo $?`
+if [ "$ST" -ne 0 ]; then
 	echo >&2 "$Errmsg ruby (version >=2.0) is required.  Aborting."; exit 1;
 fi
 

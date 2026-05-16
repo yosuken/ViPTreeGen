@@ -15,12 +15,12 @@ ViPTreeGen has been developed as a part of [the ViPTree server project](http://w
 
 ## requirements
 * BLAST+
-* Ruby (ver >=2.0)
+* Ruby (ver >=2.0, including 4.x)
 * R (ver >=3.0)
 
 ## usage 
 ```
-### ViPTreeGen ver 1.1.3 (2022-09-20) ###
+### ViPTreeGen ver 1.1.4 (2026-05-16) ###
 
 [description]
 ViPTreeGen - tool for viral proteomic tree generation from viral genomic sequences.
@@ -46,7 +46,7 @@ $ ViPTreeGen [options] <input fasta> <output dir>
 [dependencies]
     - tblastx              -- included in the BLAST+ program;
                               https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download
-    - ruby (ver >=2.0)
+    - ruby (ver >=2.0, including 4.x)
 
   (for tree generation)
     - R (ver >=3.0)

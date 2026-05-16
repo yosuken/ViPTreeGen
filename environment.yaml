@@ -1,0 +1,11 @@
+name: viptreegen
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - blast >=2.9
+  - ruby >=2.0
+  - r-base >=3.0
+  - r-ape
+  - r-phangorn
+  - parallel
