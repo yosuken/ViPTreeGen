@@ -7,11 +7,13 @@ package:
 
 source:
   url: https://github.com/yosuken/ViPTreeGen/archive/refs/tags/v{{ version }}.tar.gz
-  sha256: 0000000000000000000000000000000000000000000000000000000000000000  # release 後に `sha256sum` で取得して差し替え
+  sha256: aa5ef4aa6c3a12281dec4386153abc969878bb71f0aba589cd959cb4da578b25
 
 build:
   number: 0
   noarch: generic
+  run_exports:
+    - {{ pin_subpackage(name, max_pin="x") }}
   script: |
     mkdir -p $PREFIX/share/{{ name }} $PREFIX/bin
     cp -r ViPTreeGen ViPTreeGen.rake script $PREFIX/share/{{ name }}/
