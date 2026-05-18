@@ -1,346 +1,390 @@
-#!/bin/bash
-###
-### ViPTreeGen ver 1.1.4 (2026-05-16): a tool for viral proteomic tree generation
-###
-### Copyright: 2017 (C) Yosuke Nishimura (yosuke@kuicr.kyoto-u.ac.jp)
-### Licence: MIT license
-###
+#!/usr/bin/env ruby
+#
+#  ViPTreeGen / a command line tool for viral proteomic tree generation
+#
+#    Copyright: 2017 (C) Yosuke Nishimura
+#    License: MIT
+#
+#  Entry point. Parses CLI options, validates inputs, checks dependencies,
+#  then invokes `rake -f ViPTreeGen.rake` with the resolved options passed via
+#  environment variables.
+#
 
-PROGNAME=$(basename $0)
-VERSION="1.1.4"
-Errmsg="[1;31m[error][0m"
-Sccmsg="[1;32m[success][0m"
-Modidate="2026-05-16"
-incmd="$0 $*"
+STDOUT.sync = true ### real-time output through tee
 
+require "optparse"
+require "fileutils"
+require "open3"
 
-# {{{ usage
-read -r -d '' usage <<EOF
-[1;35m### $PROGNAME ver $VERSION ($Modidate) ###[0m
+class ViPTreeGen
+  VERSION  = "2.0.0"
+  MODIDATE = "2026-05-17"
 
-[1;32m[description][0m
-$PROGNAME - tool for viral proteomic tree generation from viral genomic sequences.
-$PROGNAME has been developed as the ViPTree server project (http://www.genome.jp/viptree).
+  ERRMSG = "\e[1;31m[error]\e[0m"
+  SCCMSG = "\e[1;32m[success]\e[0m"
 
-$PROGNAME first computes genome-wide sequence similarity distance based on tBLASTx results,
-then construct (bio)nj tree based on the distance (1 - similarity) matrix.
+  def initialize
+    @options = {
+      # search engine
+      mode:                       "tblastx",
+      mmseqs_split_memory_limit:  "12G",
 
-Complete genomes are recommended as input sequence for accurate distance/tree computation,
-though genome fragments are also acceptable.
+      # tblastx / mmseqs shared
+      cutlen:  100_000,
+      dbsize:  "200000000",
+      matrix:  "BLOSUM45",
+      evalue:  "1e-2",
+      idt:     30,
+      aalen:   30,
 
-If you compute many sequences (e.g. n > 100) or large sequences (e.g. NCLDV genomes), it may take a long time.
-In those cases, use '--ncpus' or '--queue' for parallel computating.
+      # tree
+      notree:  false,
+      method:  "bionj",
 
-[1;32m[usage][0m
-$ $PROGNAME [options] <input fasta> <output dir>
+      # 2D
+      twoD:    nil,
 
-- <input fasta> should be in nucleotide FASTA format and include at least 3 sequences.
-- If sequence name (before the first space in the header line) includes a character other than
-  alphabets, numbers, dot(.), hyphen(-), or underscore(_), it will be replaced with underscore.
-- <output dir> should not exist.
+      # computation
+      ncpus:   nil,
+      queue:   nil,
+      wtime:   "24:00:00",
+    }
 
-[1;32m[dependencies][0m
-    - tblastx              -- included in the BLAST+ program;
-                              https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download
-    - ruby (ver >=2.0, including 4.x)
+    @progname  = File.basename($0)
+    @scrdir    = File.dirname(File.expand_path($0))
+    @stime     = Time.now
+    @stime_str = @stime.strftime("%Y-%m-%d %H:%M:%S")
+    @incmd     = "#{$0} #{ARGV.join(" ")}"
+  end
 
-  (for tree generation)
-    - R (ver >=3.0)
-    - R package 'ape'      -- try install.packages('ape') in R terminal
-    - R package 'phangorn' -- try install.packages('phangorn') in R terminal
+  # {{{ def usage
+  def usage
+    <<~EOF
+    \e[1;35m### #{@progname} ver #{VERSION} (#{MODIDATE}) ###\e[0m
 
-[1;32m[options][0m
-  (general)
-    -h, --help
-    -v, --version
+    \e[1;32m[description]\e[0m
+    #{@progname} - tool for viral proteomic tree generation from viral genomic sequences.
+    #{@progname} has been developed as the ViPTree server project (http://www.genome.jp/viptree).
 
-  (tblastx)
-    --cutlen       [>=10000]   (default: 100000)    -- length to split input sequences for faster tblastx computation
-    --dbsize       [int]       (default: 200000000)
-    --matrix       [str]       (default: BLOSUM45)
-    --evalue       [num]       (default: 1e-2)
-    --min-idt      [int]       (default: 30)
-    --min-aalen    [int]       (default: 30)
+    #{@progname} first computes genome-wide sequence similarity distance based on tBLASTx results,
+    then construct (bio)nj tree based on the distance (1 - similarity) matrix.
 
-  (tree)
-    --notree                   (default: off)       -- generate only similarity/distance matrix
-    --method       [nj|bionj]  (default: bionj)     -- proteomic tree generation method
+    Complete genomes are recommended as input sequence for accurate distance/tree computation,
+    though genome fragments are also acceptable.
 
-  (2D mode)
-    --2D           [query fasta] (default: off)     -- do not generate tree but similarity matrix of: 'query sequences' against 'input sequences'. 2D mode is designed to find the most related 'input sequence' for each 'query sequence'
+    If you compute many sequences (e.g. n > 100) or large sequences (e.g. NCLDV genomes), it may take a long time.
+    In those cases, use '--ncpus' or '--queue' for parallel computating.
 
-  (use GNU parallel)
-    --ncpus        [int]                            -- number of jobs in parallel	
+    \e[1;32m[usage]\e[0m
+    $ #{@progname} [options] <input fasta> <output dir>
 
-  (for icr user)                                    -- for computation in the ICR supercomputer system
-    --queue        [JP1]                            -- queue for computation
+    - <input fasta> should be in nucleotide FASTA format and include at least 3 sequences.
+    - If sequence name (before the first space in the header line) includes a character other than
+      alphabets, numbers, dot(.), hyphen(-), or underscore(_), it will be replaced with underscore.
+    - <output dir> should not exist.
 
-[1;32m[output files][0m
-  (normal mode)
-    result/all.sim.matrix              -- similarity (SG score) matrix
-    result/all.dist.matrix             -- distance (1-SG score) matrix
-    result/all.[bio]nj.[a|de]sc.newick -- Newick files of the viral proteomic tree, midpoint rooted and ladderized
-                                          asc: (nodes with fewer children) --> (nodes with more children).
-                                          desc: (nodes with more children) --> (nodes with fewer children).
+    \e[1;32m[dependencies]\e[0m
+        - tblastx                 -- BLAST+ program (required only when --mode tblastx, default);
+                                     https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download
+        - mmseqs2 (>=13.45111)    -- required only when --mode mmseqs;
+                                     https://github.com/soedinglab/MMseqs2
+        - ruby (ver >=2.0)        -- orchestration; tested with 2.x/3.x/4.x
+        - duckdb (>=1.0)          -- CLI; used to aggregate run state into ${outdir}/run.duckdb
+        - viptreegen-summary-pre  -- bundled Rust binary; replaces the 01-3/02-1/02-2/02-3 Ruby+SQL path (new in v2.0.0).
+                                     Installed by Bioconda. For source builds, run 'cargo build --release --manifest-path rust/Cargo.toml'.
 
-  (2D mode)
-    result/2D.sim.matrix               -- similarity (SG score) matrix (row-wise: query fasta, column-wise: input fasta)
-    result/top10.sim.list              -- top10 SG scores for each query sequence. format: 1st column - query ID; from 2nd to 11st columns - ID:SG_score
-EOF
-# }}} usage
+      (for tree generation)
+        - R (ver >=3.0)
+        - R package 'ape'      -- try install.packages('ape') in R terminal
+        - R package 'phangorn' -- try install.packages('phangorn') in R terminal
 
+    \e[1;32m[options]\e[0m
+      (general)
+        -h, --help
+        -v, --version
 
-# {{{ parse command line
-for OPT in "$@"
-do
-	case "$OPT" in
-		'-h'|'--help' )
-			echo "$usage"
-			exit 1
-			;;
-		'-v'|'--version' )
-			echo $VERSION
-			exit 1
-			;;
-		'--notree' )
-			notree=true
-			shift 1
-			;;
-		'--cutlen' )
-			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
-				echo "$Errmsg option requires an argument -- $1" 1>&2
-				exit 1
-			fi
-			cutlen="$2"
-			shift 2
-			;;
-		'--dbsize' )
-			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
-				echo "$Errmsg option requires an argument -- $1" 1>&2
-				exit 1
-			fi
-			dbsize="$2"
-			shift 2
-			;;
-		'--matrix' )
-			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
-				echo "$Errmsg option requires an argument -- $1" 1>&2
-				exit 1
-			fi
-			matrix="$2"
-			shift 2
-			;;
-		'--evalue' )
-			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
-				echo "$Errmsg option requires an argument -- $1" 1>&2
-				exit 1
-			fi
-			evalue="$2"
-			shift 2
-			;;
-		'--min-idt' )
-			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
-				echo "$Errmsg option requires an argument -- $1" 1>&2
-				exit 1
-			fi
-			idt="$2"
-			shift 2
-			;;
-		'--min-aalen' )
-			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
-				echo "$Errmsg option requires an argument -- $1" 1>&2
-				exit 1
-			fi
-			aalen="$2"
-			shift 2
-			;;
-		'--method' )
-			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
-				echo "$Errmsg option requires an argument -- $1" 1>&2
-				exit 1
-			fi
-			method="$2"
-			shift 2
-			;;
-		'--queue' )
-			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
-				echo "$Errmsg option requires an argument -- $1" 1>&2
-				exit 1
-			fi
-			queue="$2"
-			shift 2
-			;;
-		'--ncpus' )
-			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
-				echo "$Errmsg option requires an argument -- $1" 1>&2
-				exit 1
-			fi
-			ncpus="$2"
-			shift 2
-			;;
-		'--wtime' )
-			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
-				echo "$Errmsg option requires an argument -- $1" 1>&2
-				exit 1
-			fi
-			wtime="$2"
-			shift 2
-			;;
-		'--2D' )
-			if [[ -z "$2" ]] || [[ "$2" =~ ^-+ ]] ; then
-				echo "$Errmsg option requires a FASTA file -- $1" 1>&2
-				exit 1
-			fi
-			twoD="$2"
-			shift 2
-			;;
-		'--'|'-' )
-			shift 1
-			params+=( "$@" )
-			break
-			;;
-		-*)
-			echo "$Errmsg illegal option -- '$(echo $1 | sed 's/^-*//')'" 1>&2
-			exit 1
-			;;
-		*)
-			if [[ ! -z "$1" ]] && [[ ! "$1" =~ ^-+ ]] ; then
-				#params=( ${params[@]} "$1" )
-				params+=( "$1" )
-				shift 1
-			fi
-			;;
-	esac
-done
-if [ -z $params ] ; then
-	echo "$Errmsg need 2 arguments" 1>&2
-	echo 
-	echo "$usage" 1>&2
-	exit 1
-elif [ ${#params[@]} -lt 2 ] ; then
-	echo "$Errmsg need 2 arguments" 1>&2
-	exit 1
-elif ! [ -f "${params[0]}" ] ; then
-	echo "$Errmsg  first argument should be a fasta file." 1>&2
-	exit 1
-elif [ -e "${params[1]}" ] ; then
-	echo "$Errmsg  output directory already exists." 1>&2
-	exit 1
-fi
-# }}} parse command line
+      (search engine)
+        --mode         [tblastx|mmseqs] (default: tblastx) -- all-vs-all search engine. mmseqs uses MMseqs2
+                                                              translated mode (--search-type 4); generally ~10x faster
+                                                              than tblastx but results are not bit-identical.
+        --mmseqs-split-memory-limit [size] (default: 12G)   -- peak RAM cap for mmseqs target index (e.g. 12G, 4G).
+                                                              Pass through to mmseqs --split-memory-limit. Use a smaller
+                                                              value on a memory-constrained host (slower but bounded).
+                                                              Pass '0' (= mmseqs default) to disable the cap and let
+                                                              mmseqs use as much RAM as needed (fastest, unbounded).
+                                                              mmseqs mode only.
 
+      (tblastx / mmseqs shared)
+        --cutlen       [>=10000]   (default: 100000)    -- length to split input sequences for faster computation
+        --dbsize       [int]       (default: 200000000) -- ignored in --mode mmseqs (no equivalent knob)
+        --matrix       [str]       (default: BLOSUM45)
+        --evalue       [num]       (default: 1e-2)
+        --min-idt      [int]       (default: 30)
+        --min-aalen    [int]       (default: 30)
 
-# {{{ check dependencies
-### check availablity of tblastx
-command -v tblastx >/dev/null 2>&1 || { echo >&2 "$Errmsg tblastx (in BLAST+ package) is required but not available.  Aborting."; exit 1; }
-command -v makeblastdb >/dev/null 2>&1 || { echo >&2 "$Errmsg makeblastdb (in BLAST+ package) is required but not available.  Aborting."; exit 1; }
+      (tree)
+        --notree                   (default: off)       -- generate only similarity/distance matrix
+        --method       [nj|bionj]  (default: bionj)     -- proteomic tree generation method
 
-### check availablity of R and ape
-if [ -z $notree ]; then 
-	command -v R >/dev/null 2>&1 || \
-		{ echo >&2 "$Errmsg R is required but not available.  Aborting."; exit 1; }
-	LANG=C R --quiet --no-save --no-restore -e "library('ape')" >/dev/null 2>&1 || \
-		{ echo >&2 "$Errmsg R package 'ape' must be installed but not available.  Aborting."; exit 1; }
-	LANG=C R --quiet --no-save --no-restore -e "library('phangorn')" >/dev/null 2>&1 || \
-		{ echo >&2 "$Errmsg R package 'phangorn' must be installed but not available.  Aborting."; exit 1; }
-fi
+      (2D mode)
+        --2D           [query fasta] (default: off)     -- do not generate tree but similarity matrix of: 'query sequences' against 'input sequences'. 2D mode is designed to find the most related 'input sequence' for each 'query sequence'
 
-### check ruby version (>= 2.0; tested with 2.x/3.x/4.x)
-ST=`ruby -e 'exit (Gem::Version.new(RUBY_VERSION) >= Gem::Version.new("2.0.0")) ? 0 : 1' 2>/dev/null; echo $?`
-if [ "$ST" -ne 0 ]; then
-	echo >&2 "$Errmsg ruby (version >=2.0) is required.  Aborting."; exit 1;
-fi
+      (use GNU parallel)
+        --ncpus        [int]                            -- number of jobs in parallel
 
-### check availablity of GNU parallel
-if [ -n $ncpus ]; then 
-	command -v parallel >/dev/null 2>&1 || { echo >&2 "$Errmsg GNU parallel is required but not available.  Aborting."; exit 1; }
-fi
-# }}} check dependencies
+      (for icr user)                                    -- for computation in the ICR supercomputer system
+        --queue        [JP1]                            -- queue for computation
 
+    \e[1;32m[output files]\e[0m
+      (normal mode)
+        result/all.sim.matrix              -- similarity (SG score) matrix
+        result/all.dist.matrix             -- distance (1-SG score) matrix
+        result/all.[bio]nj.[a|de]sc.newick -- Newick files of the viral proteomic tree, midpoint rooted and ladderized
 
-# {{{ assign variables 
-### parse args
-fin="${params[0]}"
-dir="${params[1]}"
+      (2D mode)
+        result/2D.sim.matrix               -- similarity (SG score) matrix (row-wise: query fasta, column-wise: input fasta)
+        result/top10.sim.list              -- top10 SG scores for each query sequence. format: 1st column - query ID; from 2nd to 11st columns - ID:SG_score
 
-### param for split length for fast up
-cutlen="${cutlen:-100000}"
+      (aggregated state)
+        run.duckdb                         -- single DuckDB file: summary_pre (per-pair raw stats), self_scores, summary_tsv,
+                                              sequences, run_metadata, logs (tblastx + makeblastdb).
+                                              Inspect with `duckdb run.duckdb`. Per-node tblastx.out files are deleted after the
+                                              Rust binary (viptreegen-summary-pre) consumes them into summary_pre.
+    EOF
+  end
+  # }}} def usage
 
-### tblastx params
-dbsize="${dbsize:-200000000}"
-matrix="${matrix:-BLOSUM45}"
-evalue="${evalue:-1e-2}"
-idt="${idt:-30}"
-aalen="${aalen:-30}"
+  # {{{ def parse_options
+  def parse_options
+    parser = OptionParser.new do |opts|
+      opts.banner = usage
 
-### tree generation param
-method="${method:-bionj}"
+      ## search engine
+      opts.on("--mode MODE", "search engine: tblastx|mmseqs (default: tblastx)") do |v|
+        @options[:mode] = v
+      end
+      opts.on("--mmseqs-split-memory-limit SIZE",
+              "mmseqs --split-memory-limit (default: 12G; pass 0 to disable)") do |v|
+        @options[:mmseqs_split_memory_limit] = v
+      end
 
-### 2D mode
-twoD="${twoD:-}"
+      ## tblastx / mmseqs shared
+      opts.on("--cutlen INT", Integer)      { |v| @options[:cutlen] = v }
+      opts.on("--dbsize INT")               { |v| @options[:dbsize] = v }
+      opts.on("--matrix STR")               { |v| @options[:matrix] = v }
+      opts.on("--evalue NUM")               { |v| @options[:evalue] = v }
+      opts.on("--min-idt INT", Integer)     { |v| @options[:idt] = v }
+      opts.on("--min-aalen INT", Integer)   { |v| @options[:aalen] = v }
 
-### computation params
-queue="${queue}"
-nthread="${nthread:-1}"
-wtime="${wtime:-24:00:00}"
+      ## tree
+      opts.on("--notree")                   { @options[:notree] = true }
+      opts.on("--method METHOD",
+              "tree method: nj or bionj (default: bionj)") { |v| @options[:method] = v }
 
-### rakefile/logdir
-pushd `dirname $0` > /dev/null
-scrdir=`pwd -P`
-popd > /dev/null
-jobname=`basename $0`
-rakefile=$scrdir/$jobname.rake
-logdir=$dir/log
-# }}} assign variables 
+      ## 2D mode
+      opts.on("--2D FASTA",
+              "query fasta for 2D mode (similarity matrix of query x input)") { |v| @options[:twoD] = v }
 
+      ## computation
+      opts.on("--ncpus INT")                { |v| @options[:ncpus] = v }
+      opts.on("--queue QUEUE")              { |v| @options[:queue] = v }
+      opts.on("--wtime TIME")               { |v| @options[:wtime] = v }
 
-# {{{ after run function
-function after_run(){
-  endTime=$(LC_ALL=C date +"%Y-%m-%d %H:%M:%S %z")
+      ## general
+      opts.on("-h", "--help")    { puts usage; exit 0 }
+      opts.on("-v", "--version") { puts VERSION; exit 0 }
+    end
 
-  if [[ $1 -gt 0 ]] ; then
-    echo "$Errmsg run failed: $endTime" > "$logdir/$startTime.$jobname.error"
-    echo "$Errmsg process is killed: $endTime" |tee -a "$logdir/$jobname.log"
-    exit 1
-  else
-    echo "$Sccmsg run finished: $endTime" > "$logdir/$startTime.$jobname.success"
-  fi
-}
-### }}} after run function
+    begin
+      parser.parse!
+    rescue OptionParser::InvalidOption, OptionParser::InvalidArgument, OptionParser::MissingArgument => e
+      $stderr.puts "#{ERRMSG} #{e.message}"
+      $stderr.puts "         execute '#{@progname} -h' for usage"
+      exit 1
+    end
 
+    if ARGV.size != 2
+      $stderr.puts "#{ERRMSG} require <input fasta> and <output dir> after options (got #{ARGV.size} positional)"
+      $stderr.puts "         execute '#{@progname} -h' for usage"
+      exit 1
+    end
+    @fin = ARGV[0]
+    @dir = ARGV[1]
+  end
+  # }}} def parse_options
 
-# {{{ input command
-read -r -d '' incmdlog <<EOF
+  # {{{ def validate_options
+  def validate_options
+    unless File.file?(@fin)
+      $stderr.puts "#{ERRMSG} first argument should be a fasta file (not found: #{@fin})"
+      exit 1
+    end
+    if File.exist?(@dir)
+      $stderr.puts "#{ERRMSG} output directory already exists (#{@dir})"
+      exit 1
+    end
+    unless %w[tblastx mmseqs].include?(@options[:mode])
+      $stderr.puts "#{ERRMSG} --mode must be 'tblastx' or 'mmseqs' (got: '#{@options[:mode]}')"
+      exit 1
+    end
+    if @options[:twoD] && !File.file?(@options[:twoD])
+      $stderr.puts "#{ERRMSG} --2D fasta not found: #{@options[:twoD]}"
+      exit 1
+    end
+  end
+  # }}} def validate_options
 
-[1;32m===== command line[0m
+  # {{{ def check_dependencies
+  def check_dependencies
+    case @options[:mode]
+    when "tblastx"
+      check_cmd("tblastx",     "in BLAST+ package; required for --mode tblastx")
+      check_cmd("makeblastdb", "in BLAST+ package; required for --mode tblastx")
+    when "mmseqs"
+      check_cmd("mmseqs",      "MMseqs2; required for --mode mmseqs")
+    end
 
-$ $incmd
+    unless @options[:notree]
+      check_cmd("R", "required for tree generation (or pass --notree)")
+      check_r_pkg("ape")
+      check_r_pkg("phangorn")
+    end
 
-[1;32m===== log file[0m
+    if Gem::Version.new(RUBY_VERSION) < Gem::Version.new("2.0.0")
+      $stderr.puts "#{ERRMSG} ruby (version >=2.0) is required"
+      exit 1
+    end
 
-$logdir/$jobname.log
+    check_cmd("duckdb", "CLI used to aggregate run state into run.duckdb")
 
-[1;32m===== check version: $PROGNAME[0m
+    unless ENV["VIPTREEGEN_SUMMARY_PRE"] ||
+           system("command -v viptreegen-summary-pre >/dev/null 2>&1") ||
+           File.executable?(File.join(@scrdir, "rust/target/release/viptreegen-summary-pre"))
+      $stderr.puts "#{ERRMSG} viptreegen-summary-pre (bundled Rust binary) is required but not available."
+      $stderr.puts "         Install via Bioconda, or build from source:"
+      $stderr.puts "         cargo build --release --manifest-path #{@scrdir}/rust/Cargo.toml"
+      exit 1
+    end
 
-$VERSION
+    check_cmd("parallel", "GNU parallel; required when --ncpus is set") if @options[:ncpus]
+  end
 
-EOF
-# }}} input command
+  def check_cmd(cmd, hint)
+    unless system("command -v #{cmd} >/dev/null 2>&1")
+      $stderr.puts "#{ERRMSG} #{cmd} is required but not available (#{hint}). Aborting."
+      exit 1
+    end
+  end
 
+  def check_r_pkg(pkg)
+    _, status = Open3.capture2e("LANG=C R --quiet --no-save --no-restore -e \"library('#{pkg}')\"")
+    unless status.success?
+      $stderr.puts "#{ERRMSG} R package '#{pkg}' must be installed but not available. Aborting."
+      exit 1
+    end
+  end
+  # }}} def check_dependencies
 
-### main
-mkdir -p $logdir
-startTime=$(LC_ALL=C date +"%Y-%m-%d %H:%M:%S")
+  # {{{ def setup_logging
+  def setup_logging
+    @logdir  = File.join(@dir, "log")
+    FileUtils.mkdir_p(@logdir)
+    @logfile = File.join(@logdir, "#{@progname}.log")
 
-## write input command
-echo "$incmdlog" |tee -a $logdir/$jobname.log
+    incmdlog = <<~EOF
 
-## trap Ctrl-C etc...
-trap 'after_run 1' 1 2 3 9 15
+    \e[1;32m===== command line\e[0m
 
-## run
-rake -f $rakefile dir="$dir" fin="$fin" cutlen="$cutlen" dbsize="$dbsize" matrix="$matrix" evalue="$evalue" idt="$idt" aalen="$aalen" \
-	twoD="$twoD" method="$method" queue="$queue" ncpus="$ncpus" wtime="$wtime" notree="$notree" 2>&1 |tee -a $logdir/$jobname.log
-st=$(( ${PIPESTATUS[0]} + ${PIPESTATUS[1]} ))
-after_run $st
+    $ #{@incmd}
 
+    \e[1;32m===== log file\e[0m
+
+    #{@logfile}
+
+    \e[1;32m===== check version: #{@progname}\e[0m
+
+    #{VERSION}
+
+    EOF
+    File.open(@logfile, "a") { |f| f.write(incmdlog) }
+    puts incmdlog
+  end
+  # }}} def setup_logging
+
+  # {{{ def run_rake
+  def run_rake
+    rakefile = File.join(@scrdir, "#{@progname}.rake")
+    env_vars = {
+      "dir"                       => @dir,
+      "fin"                       => @fin,
+      "cutlen"                    => @options[:cutlen].to_s,
+      "dbsize"                    => @options[:dbsize].to_s,
+      "matrix"                    => @options[:matrix],
+      "evalue"                    => @options[:evalue].to_s,
+      "idt"                       => @options[:idt].to_s,
+      "aalen"                     => @options[:aalen].to_s,
+      "mode"                      => @options[:mode],
+      "mmseqs_split_memory_limit" => @options[:mmseqs_split_memory_limit],
+      "twoD"                      => @options[:twoD].to_s,
+      "method"                    => @options[:method],
+      "queue"                     => @options[:queue].to_s,
+      "ncpus"                     => @options[:ncpus].to_s,
+      "wtime"                     => @options[:wtime],
+      "notree"                    => @options[:notree] ? "true" : "",
+    }
+    env_vars.each { |k, v| ENV[k] = v }
+
+    %w[HUP INT QUIT TERM].each do |sig|
+      Signal.trap(sig) { after_run(1); exit 1 }
+    end
+
+    status = 1
+    File.open(@logfile, "a") do |fw|
+      fw.sync = true
+      Open3.popen2e("rake", "-f", rakefile) do |stdin, out, wait_thr|
+        stdin.close
+        out.each_line do |line|
+          fw.write(line)
+          STDOUT.write(line)
+        end
+        status = wait_thr.value.exitstatus
+      end
+    end
+    after_run(status)
+    exit status
+  end
+  # }}} def run_rake
+
+  # {{{ def after_run
+  def after_run(status)
+    etime = Time.now.strftime("%Y-%m-%d %H:%M:%S %z")
+    if status == 0
+      File.open(File.join(@logdir, "#{@stime_str}.#{@progname}.success"), "w") do |f|
+        f.puts "#{SCCMSG} run finished: #{etime}"
+      end
+    else
+      File.open(File.join(@logdir, "#{@stime_str}.#{@progname}.error"), "w") do |f|
+        f.puts "#{ERRMSG} run failed: #{etime}"
+      end
+      msg = "#{ERRMSG} process is killed: #{etime}"
+      $stderr.puts msg
+      File.open(@logfile, "a") { |f| f.puts msg } if @logfile && File.exist?(@logfile)
+    end
+  end
+  # }}} def after_run
+
+  # {{{ def run
+  def run
+    parse_options
+    validate_options
+    check_dependencies
+    setup_logging
+    run_rake
+  end
+  # }}} def run
+end
+
+if __FILE__ == $0
+  require "rubygems"
+  ViPTreeGen.new.run
+end

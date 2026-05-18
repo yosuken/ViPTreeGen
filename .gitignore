@@ -1,0 +1,39 @@
+
+### bundle related files
+/vendor/*
+/.bundle/*
+# Gemfile.lock
+
+/.filenum/
+
+### "old" directory
+*/old/
+
+### file cache
+*.swp
+*~
+.nfs*
+
+### test input and output directory
+/test*
+
+### Rust build artifacts (new in v2.0.0)
+rust/target/
+
+### Bench / output directories created during development testing
+/bench_*/
+/bench_*.log
+/bench_*_job.sh
+/bench_*.qsub.out
+/bench_*.qsub.err
+
+### Bioconda build artifacts
+/THIRDPARTY.yml
+/bld/
+/build/
+
+### Editor / IDE
+.idea/
+.vscode/
+*.iml
+.DS_Store
