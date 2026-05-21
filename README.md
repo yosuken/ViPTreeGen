@@ -4,6 +4,8 @@
 [![license](https://img.shields.io/github/license/mashape/apistatus.svg)](/LICENSE)
 [![size](https://img.shields.io/github/size/webcaetano/craft/build/phaser-craft.min.js.svg)]()
 [![doi](https://img.shields.io/badge/doi-10.1093%2Fbioinformatics%2Fbtx157-blue.svg?style=flat)](https://doi.org/10.1093/bioinformatics/btx157)
+[![install with bioconda](https://img.shields.io/badge/install%20with-bioconda-brightgreen.svg?style=flat)](https://anaconda.org/bioconda/viptreegen)
+[![Anaconda-Server Badge](https://anaconda.org/bioconda/viptreegen/badges/version.svg)](https://anaconda.org/bioconda/viptreegen)
 
 ViPTreeGen is a tool for automated generation of viral "proteomic tree" by computing genome-wide sequence similarities based on tBLASTx results.
 The original proteomic tree (i.e., "the Phage Proteomic Tree”) was developed by [Rohwer and Edwards, 2002](https://doi.org/10.1128/JB.184.16.4529-4535.2002).
@@ -12,6 +14,24 @@ It has been shown that viral groups identified in a proteomic tree well correspo
 The proteomic tree approach is effective to investigate genomes of newly sequenced viruses as well as those identified in metagenomes.
 
 ViPTreeGen has been developed as a part of [the ViPTree server project](http://www.genome.jp/viptree).
+
+## install
+
+### via Bioconda (recommended)
+```
+conda install -c bioconda viptreegen
+```
+or
+```
+mamba install -c bioconda viptreegen
+```
+
+### from source
+```
+git clone https://github.com/yosuken/ViPTreeGen.git
+cd ViPTreeGen
+./ViPTreeGen --help
+```
 
 ## requirements
 * BLAST+
