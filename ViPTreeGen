@@ -51,6 +51,9 @@ class ViPTreeGen
       ncpus:   nil,
       queue:   nil,
       wtime:   "24:00:00",
+
+      # resume a previously-failed run (output dir must already exist)
+      resume:  false,
     }
 
     @progname  = File.basename($0)
@@ -221,6 +224,14 @@ class ViPTreeGen
       opts.on("--queue QUEUE")              { |v| @options[:queue] = v }
       opts.on("--wtime TIME")               { |v| @options[:wtime] = v }
 
+      ## resume a previously-interrupted run
+      opts.on("--resume",
+              "resume from the last completed pipeline step. <output dir> must exist " \
+              "and contain run.duckdb from the prior run; <input fasta> is ignored at " \
+              "runtime (the input is read from cat/all/all.fasta in the existing dir)") {
+        @options[:resume] = true
+      }
+
       ## general
       opts.on("-h", "--help")    { puts usage; exit 0 }
       opts.on("-v", "--version") { puts VERSION; exit 0 }
@@ -246,13 +257,26 @@ class ViPTreeGen
 
   # {{{ def validate_options
   def validate_options
-    unless File.file?(@fin)
-      $stderr.puts "#{ERRMSG} first argument should be a fasta file (not found: #{@fin})"
-      exit 1
-    end
-    if File.exist?(@dir)
-      $stderr.puts "#{ERRMSG} output directory already exists (#{@dir})"
-      exit 1
+    if @options[:resume]
+      ## --resume inverts the dir-exists check: dir must already exist with a run.duckdb.
+      ## <fin> is required syntactically (positional CLI shape) but ignored at runtime.
+      unless File.directory?(@dir)
+        $stderr.puts "#{ERRMSG} --resume requires an existing output directory (not found: #{@dir})"
+        exit 1
+      end
+      unless File.file?(File.join(@dir, "run.duckdb"))
+        $stderr.puts "#{ERRMSG} --resume requires #{@dir}/run.duckdb from the previous run"
+        exit 1
+      end
+    else
+      unless File.file?(@fin)
+        $stderr.puts "#{ERRMSG} first argument should be a fasta file (not found: #{@fin})"
+        exit 1
+      end
+      if File.exist?(@dir)
+        $stderr.puts "#{ERRMSG} output directory already exists (#{@dir}) -- use --resume to continue, or pick a fresh dir"
+        exit 1
+      end
     end
     valid_modes = %w[tblastx mmseqs-tblastx blastn]
     unless valid_modes.include?(@options[:mode])
@@ -372,6 +396,7 @@ class ViPTreeGen
       "mmseqs_split_memory_limit" => @options[:mmseqs_split_memory_limit],
       "twoD"                      => @options[:twoD].to_s,
       "ref_duckdb"                => @options[:ref_duckdb].to_s,
+      "resume"                    => @options[:resume] ? "true" : "",
       "method"                    => @options[:method],
       "queue"                     => @options[:queue].to_s,
       "ncpus"                     => @options[:ncpus].to_s,

@@ -96,6 +96,14 @@ $ ViPTreeGen [options] <input fasta> <output dir>
   (2D mode)
     --2D           [query fasta] (default: off)     -- do not generate tree but similarity matrix of: 'query sequences' against 'input sequences'. 2D mode is designed to find the most related 'input sequence' for each 'query sequence'
 
+  (resume)
+    --resume                                        -- continue from the last completed pipeline step. <output dir> must
+                                                       already exist and contain run.duckdb from the prior run; <input fasta>
+                                                       is required syntactically but ignored at runtime (the input is read
+                                                       from cat/all/all.fasta in the existing dir). Parameter integrity is
+                                                       enforced: --mode/--evalue/--matrix/--ref-duckdb/etc. must match the
+                                                       prior run, otherwise --resume is rejected.
+
   (with-reference mode)
     --ref-duckdb   [path/run.duckdb]                -- a previous ViPTreeGen run.duckdb that supplies the reference set.
                                                        ref sequences, self_scores, and ref-vs-ref summary_tsv are imported

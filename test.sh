@@ -60,16 +60,23 @@ for mode in tblastx mmseqs-tblastx blastn; do
 	test -f "$out/result/all.sim.matrix" || fail "$mode: result/all.sim.matrix missing"
 done
 
-# ----- numerical regression: golden matrix for --mode tblastx -------------------
-# tblastx is deterministic across runs given the same BLAST+ version, so we ship
-# a frozen matrix under testdata/expected/ and diff it bit-exact. If this fails
-# after a BLAST+ version bump, regenerate with:
-#   ./ViPTreeGen --notree --mode tblastx testdata/ssDNA.prok.8.fasta /tmp/golden \
-#     && cp /tmp/golden/result/all.{sim,dist}.matrix testdata/expected/
-# and document the BLAST+ version in the commit message.
-step "golden matrix diff (tblastx all.sim.matrix bit-exact)"
-diff -u testdata/expected/ssDNA.prok.8.tblastx.sim.matrix  "$TEST_TMP/tblastx/result/all.sim.matrix"  || fail "tblastx sim.matrix differs from golden"
-diff -u testdata/expected/ssDNA.prok.8.tblastx.dist.matrix "$TEST_TMP/tblastx/result/all.dist.matrix" || fail "tblastx dist.matrix differs from golden"
+# ----- numerical regression: golden matrices for all three modes ---------------
+# Each of tblastx / mmseqs-tblastx / blastn is deterministic given a fixed
+# BLAST+ / MMseqs2 version + the same input, so we ship frozen matrices under
+# testdata/expected/ and bit-exact diff against them. If this fails after a
+# BLAST+ or MMseqs2 version bump, regenerate with:
+#   for m in tblastx mmseqs-tblastx blastn; do
+#     ./ViPTreeGen --notree --mode "$m" testdata/ssDNA.prok.8.fasta "/tmp/g_$m" \
+#       && cp /tmp/g_$m/result/all.{sim,dist}.matrix \
+#          "testdata/expected/ssDNA.prok.8.$m.sim.matrix" \
+#          "testdata/expected/ssDNA.prok.8.$m.dist.matrix" 2>/dev/null
+#   done
+# and document the new BLAST+ / MMseqs2 versions in the commit message.
+for mode in tblastx mmseqs-tblastx blastn; do
+	step "golden matrix diff (--mode $mode bit-exact)"
+	diff -u "testdata/expected/ssDNA.prok.8.$mode.sim.matrix"  "$TEST_TMP/$mode/result/all.sim.matrix"  || fail "$mode sim.matrix differs from golden"
+	diff -u "testdata/expected/ssDNA.prok.8.$mode.dist.matrix" "$TEST_TMP/$mode/result/all.dist.matrix" || fail "$mode dist.matrix differs from golden"
+done
 
 # ----- label normalization ------------------------------------------------------
 step "long-name normalization (exercises ParseFastaEntries)"
@@ -92,6 +99,34 @@ test -f "$TEST_TMP/ref_use/result/all.sim.matrix" || fail "ref mode: result/all.
 # matrix must be 15x15 (10 ref + 5 input) = 16 lines (header + 15 ids)
 rows=$(wc -l < "$TEST_TMP/ref_use/result/all.sim.matrix")
 [ "$rows" -eq 16 ] || fail "ref mode: expected 16 rows in all.sim.matrix, got $rows"
+
+# ----- --resume: simulated mid-flight kill --------------------------------------
+# Simulate a kill mid-pipeline by deleting the last step's step_done marker, then
+# re-run with --resume and verify the matrix still matches the golden afterwards.
+step "--resume: re-run from a partial state, expect bit-exact final matrix"
+RESUME_DIR="$TEST_TMP/resume_test"
+rm -rf "$RESUME_DIR"
+./ViPTreeGen --notree --ncpus "$NCPUS" --mode tblastx testdata/ssDNA.prok.8.fasta "$RESUME_DIR"
+# Remove the final step's step_done marker AND the final matrix to force re-run of 03-1.
+duckdb "$RESUME_DIR/run.duckdb" \
+	"DELETE FROM run_metadata WHERE key = 'step_done:03-1.make_matrix'"
+rm -f "$RESUME_DIR/result/all.sim.matrix" "$RESUME_DIR/result/all.dist.matrix"
+./ViPTreeGen --resume --notree --ncpus "$NCPUS" --mode tblastx testdata/ssDNA.prok.8.fasta "$RESUME_DIR"
+# After resume the final matrix should match the golden bit-exact.
+diff -u testdata/expected/ssDNA.prok.8.tblastx.sim.matrix "$RESUME_DIR/result/all.sim.matrix" \
+	|| fail "--resume final matrix differs from golden"
+
+step "--resume: rejects parameter change vs prior run"
+if ./ViPTreeGen --resume --notree --mode mmseqs-tblastx --ncpus "$NCPUS" \
+                testdata/ssDNA.prok.8.fasta "$RESUME_DIR" 2>/dev/null; then
+	fail "--resume should reject differing --mode (prev=tblastx, current=mmseqs-tblastx)"
+fi
+
+step "--resume: rejects when output dir does not exist"
+if ./ViPTreeGen --resume --notree --mode tblastx --ncpus "$NCPUS" \
+                testdata/ssDNA.prok.8.fasta "$TEST_TMP/nonexistent_resume_dir" 2>/dev/null; then
+	fail "--resume should reject when output dir does not exist"
+fi
 
 # ----- validation: invalid --mode rejected --------------------------------------
 step "reject invalid --mode (mmseqs-blastn was removed; see doc/mmseqs-blastn.md)"

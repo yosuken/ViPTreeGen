@@ -34,6 +34,14 @@ default search engine, schema, and on-disk output structure all change.
   - `blastn`: NCBI BLAST+ nucleotide-vs-nucleotide. Backend for the DiGAlign web tool —
     output is a *nucleotide tree*, NOT a proteomic tree. `mmseqs-blastn` was evaluated
     and removed; see `doc/mmseqs-blastn.md`.
+- **`--resume`** — resume a previously-interrupted run from the last completed
+  pipeline step. Each Rake task records `step_done:<task.name>` in
+  `run_metadata` when it finishes; `--resume` reads those markers and skips
+  completed steps. Parameter integrity (mode, matrix, evalue, schema_version,
+  ref-duckdb path, …) is verified against the prior run and `--resume` is
+  rejected on any mismatch. Useful when a long `mmseqs search` or `tblastx`
+  step is killed by OOM / qsub time limit -- restart with the same arguments
+  plus `--resume` and the pipeline continues from where it stopped.
 - **`--ref-duckdb PATH`** — with-reference mode. Reuse a previous v2.0 `run.duckdb`
   as the reference set: ref sequences, `self_scores`, and ref-vs-ref `summary_tsv`
   are ATTACHed and copied; only input-vs-input and input-vs-ref are recomputed. The

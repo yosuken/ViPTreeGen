@@ -34,6 +34,28 @@ RunBatch    = lambda do |jdir, queue, nthreads, mem, wtime, ncpus|
 	}
 end
 
+## --resume support: each Rake task records `step_done:<task.name>` in run_metadata when
+## it completes; on a subsequent run with --resume those tasks are skipped. Detection is
+## a single SELECT; marking is idempotent (INSERT OR REPLACE on the metadata PK).
+StepDone = lambda do |task_name|
+	## Cannot use DuckDBUtil.query_each before InitDuckDB has created the DB on a fresh
+	## run, so guard on file existence.
+	db = ENV["DUCKDB_PATH"]
+	return false unless db && File.file?(db)
+	done = false
+	DuckDBUtil.query_each(
+		"SELECT 1 FROM run_metadata WHERE key='step_done:#{task_name}' LIMIT 1"
+	) { |_| done = true }
+	done
+end
+
+MarkStepDone = lambda do |task_name|
+	DuckDBUtil.exec_sql(
+		"INSERT OR REPLACE INTO run_metadata VALUES " \
+		"('step_done:#{task_name}', #{DuckDBUtil.sql_str(Time.now.iso8601)});"
+	)
+end
+
 PrintStatus = lambda do |current, total, status, t|
 	puts ""
 	puts "\e[1;32m===== #{Time.now}\e[0m"
@@ -333,6 +355,8 @@ task :default do
 	## with-reference mode: previous-run `run.duckdb` providing ref sequences, self_scores, summary_tsv.
 	RefDuckDB = ENV["ref_duckdb"].to_s
 	RefMode   = !RefDuckDB.empty?
+	## --resume: continue from the last completed step (step_done markers in run_metadata).
+	Resume    = ENV["resume"].to_s == "true"
 	## In mmseqs modes the search DB uses a different prefix; in BLAST+ modes it equals the FASTA path.
 	DB       = UsesMmseqs ? "#{Fa}.mmdb" : Fa
 	## mmseqs target index memory cap (passed to mmseqs `--split-memory-limit`).
@@ -360,6 +384,53 @@ task :default do
 	commands += %w|parallel| if Ncpus != ""
 	CheckVersion.call(commands)
 
+	### resume preflight: verify previous-run parameters match, and clean up partial state
+	### from whatever step was killed mid-flight. Skipped on a fresh run.
+	if Resume
+		raise "\e[1;31mError:\e[0m --resume specified but #{Ddb} not found" unless File.file?(Ddb)
+		prev = {}
+		DuckDBUtil.query_each("SELECT key, value FROM run_metadata") do |line|
+			k, v = line.split("\t", 2)
+			prev[k] = v
+		end
+
+		## parameter integrity: compare critical knobs against the previous run.
+		twoD_now = (ENV["twoD"] || "") != ""
+		run_mode = if twoD_now then "2D"
+		           elsif RefMode then "ref"
+		           else "normal"
+		           end
+		checks = {
+			"schema_version"   => "2.0",
+			"mode"             => run_mode,
+			"search_mode"      => Mode,
+			"cutlen"           => Cutlen.to_s,
+			"dbsize"           => DBsize.to_s,
+			"matrix"           => Matrix.to_s,
+			"evalue"           => Evalue.to_s,
+			"ref_mode"         => RefMode.to_s,
+			"ref_duckdb_path"  => RefMode ? RefDuckDB : "",
+		}
+		diffs = checks.reject { |k, v| prev[k] == v || (prev[k].nil? && v.to_s.empty?) }
+		unless diffs.empty?
+			msg = diffs.map { |k, v| "  #{k}: prev=#{prev[k].inspect}, current=#{v.inspect}" }.join("\n")
+			raise "\e[1;31mError:\e[0m --resume rejected: parameters differ from the prior run:\n#{msg}\n" \
+			      "Either re-invoke with the original parameters, or start a fresh run in a new output dir."
+		end
+		puts "\e[1;36m### resume preflight OK -- parameters match the prior run\e[0m"
+
+		## cleanup partial mid-step state. Steps that completed atomically (in a SQL
+		## transaction) are unaffected; this handles the on-disk artifacts of the
+		## search step (01-2) and the mmseqs tmpdir.
+		sh "rm -rf #{Odir}/mmseqs_tmp 2>/dev/null || true"
+		unless StepDone.call("01-2.tblastx")
+			## tblastx mode: partial GNU parallel batches may have written some tblastx.out
+			## files. Re-run 01-2 produces them fresh; pre-delete to avoid mixing partial
+			## results from the killed run with new output.
+			sh "find #{Odir}/node #{Odir}/input -type f -name 'tblastx.out' -delete 2>/dev/null || true"
+		end
+	end
+
 	### run
 	NumStep  = tasks.size
 	tasks.each.with_index(1){ |task, idx|
@@ -372,6 +443,10 @@ end
 # {{{ tasks 01
 desc "01-1.2D.prep_for_tblastx"
 task "01-1.2D.prep_for_tblastx", ["step"] do |t, args|
+	if Resume && StepDone.call(t.name)
+		PrintStatus.call(args.step, NumStep, "SKIP (resume)", t)
+		next
+	end
 	PrintStatus.call(args.step, NumStep, "START", t)
 	jdir     = "#{Odir}/batch/#{t.name.split(".")[0]}"; mkdir_p jdir
 	odir     = "#{Odir}/cat/all"; mkdir_p odir
@@ -497,6 +572,7 @@ task "01-1.2D.prep_for_tblastx", ["step"] do |t, args|
 	IngestSequences.call(lab2seq_q.keys, lab2seq_q, kind: "node")
 	IngestSequences.call(lab2seq_i.keys, lab2seq_i, kind: "input")
 	DuckDBUtil.ingest_log(log, source: (UsesMmseqs ? "mmseqs:all.createdb" : "makeblastdb"))
+	MarkStepDone.call(t.name)
 end
 desc "01-1.ref.prep"
 task "01-1.ref.prep", ["step"] do |t, args|
@@ -513,6 +589,10 @@ task "01-1.ref.prep", ["step"] do |t, args|
 	##   - also write cat/all/input.fasta (used by mmseqs branch of 01-2 to build an input subset DB)
 	##   - generate per-(input-node, split) tblastx batches when Mode == 'tblastx'
 	##   - build the engine DB (makeblastdb / mmseqs createdb) on all.fasta
+	if Resume && StepDone.call(t.name)
+		PrintStatus.call(args.step, NumStep, "SKIP (resume)", t)
+		next
+	end
 	PrintStatus.call(args.step, NumStep, "START", t)
 	jdir     = "#{Odir}/batch/#{t.name.split('.')[0]}"; mkdir_p jdir
 	odir     = "#{Odir}/cat/all"; mkdir_p odir
@@ -646,10 +726,15 @@ task "01-1.ref.prep", ["step"] do |t, args|
 	## --- 11. build engine DB on combined all.fasta -------------------------
 	sh BuildDBCmd.call(mode: Mode, fasta: Fa, db_path: DB, log: log, create_index: UsesMmseqs)
 	DuckDBUtil.ingest_log(log, source: (UsesMmseqs ? "mmseqs:all.createdb" : "makeblastdb"))
+	MarkStepDone.call(t.name)
 end
 
 desc "01-1.prep_for_tblastx"
 task "01-1.prep_for_tblastx", ["step"] do |t, args|
+	if Resume && StepDone.call(t.name)
+		PrintStatus.call(args.step, NumStep, "SKIP (resume)", t)
+		next
+	end
 	PrintStatus.call(args.step, NumStep, "START", t)
 	jdir     = "#{Odir}/batch/#{t.name.split(".")[0]}"; mkdir_p jdir
 	odir     = "#{Odir}/cat/all"; mkdir_p odir
@@ -727,6 +812,7 @@ task "01-1.prep_for_tblastx", ["step"] do |t, args|
 	## populate DuckDB: sequences + makeblastdb.log (file kept for backward compat in P0)
 	IngestSequences.call(lab2seq.keys, lab2seq, kind: "node")
 	DuckDBUtil.ingest_log(log, source: (UsesMmseqs ? "mmseqs:all.createdb" : "makeblastdb"))
+	MarkStepDone.call(t.name)
 end
 desc "01-2.tblastx"
 task "01-2.tblastx", ["step"] do |t, args|
@@ -736,6 +822,10 @@ task "01-2.tblastx", ["step"] do |t, args|
 	##                 then `convertalis` to BLAST-tab, then `m8_split.rb` to lay out
 	##                 the result as `<kind>/<qid>/blast/tblastx.out` files so that
 	##                 the Rust binary in step 02-3 reads them unchanged.
+	if Resume && StepDone.call(t.name)
+		PrintStatus.call(args.step, NumStep, "SKIP (resume)", t)
+		next
+	end
 	PrintStatus.call(args.step, NumStep, "START", t)
 
 	case Mode
@@ -807,6 +897,7 @@ task "01-2.tblastx", ["step"] do |t, args|
 		end
 		sh "rm -rf #{tmpdir}"
 	end
+	MarkStepDone.call(t.name)
 end
 # }}} tasks 01
 
@@ -819,6 +910,10 @@ task "02-3.make_summary_pre", ["step"] do |t, args|
 	## viptreegen-summary-pre, which fuses the legacy 01-3 (cat+rename+shift),
 	## 02-1 (idt/alen filter), 02-2 (BED conversion), and 02-3 (interval merge)
 	## into one parallel single-process step.
+	if Resume && StepDone.call(t.name)
+		PrintStatus.call(args.step, NumStep, "SKIP (resume)", t)
+		next
+	end
 	PrintStatus.call(args.step, NumStep, "START", t)
 	tdir    = "#{Odir}/tmp"; mkdir_p tdir
 	bin     = RustBin.call
@@ -841,9 +936,14 @@ task "02-3.make_summary_pre", ["step"] do |t, args|
 
 	## cleanup: tblastx.out files (now consumed into summary_pre) + tmp TSVs
 	sh "find #{Odir}/node #{Odir}/input -type f -name 'tblastx.out' -delete 2>/dev/null || true; rm -f #{tdir}/02-3.*.tsv"
+	MarkStepDone.call(t.name)
 end
 desc "02-4.make_self_tblastx"
 task "02-4.make_self_tblastx", ["step"] do |t, args|
+	if Resume && StepDone.call(t.name)
+		PrintStatus.call(args.step, NumStep, "SKIP (resume)", t)
+		next
+	end
 	PrintStatus.call(args.step, NumStep, "START", t)
 
 	## populate self_scores via pure SQL: self-hit is where que == sub.
@@ -864,9 +964,14 @@ task "02-4.make_self_tblastx", ["step"] do |t, args|
 			) WHERE rn = 1;
 		COMMIT;
 	SQL
+	MarkStepDone.call(t.name)
 end
 desc "02-5.2D.make_summary_tsv" ### 2D mode
 task "02-5.2D.make_summary_tsv", ["step"] do |t, args|
+	if Resume && StepDone.call(t.name)
+		PrintStatus.call(args.step, NumStep, "SKIP (resume)", t)
+		next
+	end
 	PrintStatus.call(args.step, NumStep, "START", t)
 	script   = "#{File.dirname(__FILE__)}/script/#{t.name}.rb"
 	tdir     = "#{Odir}/tmp"; mkdir_p tdir
@@ -881,9 +986,14 @@ task "02-5.2D.make_summary_tsv", ["step"] do |t, args|
 		COMMIT;
 	SQL
 	sh "rm -f #{out_tsv}"
+	MarkStepDone.call(t.name)
 end
 desc "02-5.make_summary_tsv" ### normal mode (also used by ref mode)
 task "02-5.make_summary_tsv", ["step"] do |t, args|
+	if Resume && StepDone.call(t.name)
+		PrintStatus.call(args.step, NumStep, "SKIP (resume)", t)
+		next
+	end
 	PrintStatus.call(args.step, NumStep, "START", t)
 	script   = "#{File.dirname(__FILE__)}/script/#{t.name}.rb"
 	tdir     = "#{Odir}/tmp"; mkdir_p tdir
@@ -905,6 +1015,7 @@ task "02-5.make_summary_tsv", ["step"] do |t, args|
 		COMMIT;
 	SQL
 	sh "rm -f #{out_tsv}"
+	MarkStepDone.call(t.name)
 end
 # }}} tasks 02
 
@@ -912,6 +1023,10 @@ end
 # {{{ tasks 03
 desc "03-1.2D.make_matrix"
 task "03-1.2D.make_matrix", ["step"] do |t, args|
+	if Resume && StepDone.call(t.name)
+		PrintStatus.call(args.step, NumStep, "SKIP (resume)", t)
+		next
+	end
 	PrintStatus.call(args.step, NumStep, "START", t)
 	rdir = "#{Odir}/result"; mkdir_p rdir
 	qids = []; DuckDBUtil.query_each("SELECT seq_id FROM sequences WHERE kind = 'node' ORDER BY ord") { |l| qids << l.strip }
@@ -959,9 +1074,14 @@ task "03-1.2D.make_matrix", ["step"] do |t, args|
 	}
 
 	FinalLogCleanup.call
+	MarkStepDone.call(t.name)
 end
 desc "03-1.make_matrix"
 task "03-1.make_matrix", ["step"] do |t, args|
+	if Resume && StepDone.call(t.name)
+		PrintStatus.call(args.step, NumStep, "SKIP (resume)", t)
+		next
+	end
 	PrintStatus.call(args.step, NumStep, "START", t)
 	rdir = "#{Odir}/result"; mkdir_p rdir
 	ids  = []; DuckDBUtil.query_each("SELECT seq_id FROM sequences WHERE kind = 'node' ORDER BY ord") { |l| ids << l.strip }
@@ -982,10 +1102,10 @@ task "03-1.make_matrix", ["step"] do |t, args|
 		ids.each{ |id2|
 			s = similarities[id1][id2]
 			s = s == 0 ? "0" : (s == 1 ? "1" : "%.4f" % s)
-			t = 1 - similarities[id1][id2]
-			t = t == 0 ? "0" : (t == 1 ? "1" : "%.4f" % t)
+			d = 1 - similarities[id1][id2]
+			d = d == 0 ? "0" : (d == 1 ? "1" : "%.4f" % d)
 			out1 << s
-			out2 << t
+			out2 << d
 		}
 		fout1.puts out1*"\t"
 		fout2.puts out2*"\t"
@@ -993,9 +1113,14 @@ task "03-1.make_matrix", ["step"] do |t, args|
 	[fout1, fout2].each{ |fout| fout.close }
 
 	FinalLogCleanup.call
+	MarkStepDone.call(t.name)
 end
 desc "03-2.matrix_to_nj"
 task "03-2.matrix_to_nj", ["step"] do |t, args|
+	if Resume && StepDone.call(t.name)
+		PrintStatus.call(args.step, NumStep, "SKIP (resume)", t)
+		next
+	end
 	PrintStatus.call(args.step, NumStep, "START", t)
 	rdir     = "#{Odir}/result"
 	flag     = "dist"
@@ -1004,5 +1129,6 @@ task "03-2.matrix_to_nj", ["step"] do |t, args|
 	foutpref = "#{rdir}/all.#{TreeMethod}"
 	flog     = "#{rdir}/all.#{TreeMethod}.makelog"
 	sh "LANG=C Rscript --quiet --no-save --no-restore #{script} #{fin} #{foutpref} #{flag} #{TreeMethod} >#{flog} 2>&1"
+	MarkStepDone.call(t.name)
 end
 # }}} tasks 03
