@@ -100,6 +100,32 @@ test -f "$TEST_TMP/ref_use/result/all.sim.matrix" || fail "ref mode: result/all.
 rows=$(wc -l < "$TEST_TMP/ref_use/result/all.sim.matrix")
 [ "$rows" -eq 16 ] || fail "ref mode: expected 16 rows in all.sim.matrix, got $rows"
 
+# ----- --mmseqs-tblastx-chunk-size: chunking is deterministic ------------------
+# Force the 8-seq input through 3 query chunks and verify the resulting matrix
+# matches the 1-chunk golden bit-exact. This protects the chunking machinery
+# (ChunkFasta, per-chunk step_done, cat -> m8_split) from drift.
+step "mmseqs-tblastx chunking: chunk_size=3 (-> 3 chunks) matches default golden"
+CHUNK_DIR="$TEST_TMP/chunk3"
+rm -rf "$CHUNK_DIR"
+./ViPTreeGen --notree --ncpus "$NCPUS" --mmseqs-tblastx-chunk-size 3 \
+             testdata/ssDNA.prok.8.fasta "$CHUNK_DIR"
+diff -u testdata/expected/ssDNA.prok.8.mmseqs-tblastx.sim.matrix \
+        "$CHUNK_DIR/result/all.sim.matrix" \
+	|| fail "chunk_size=3 result differs from default (1-chunk) golden"
+# Sanity: we should have step_done markers for 3 chunks
+chunks=$(duckdb -noheader -list "$CHUNK_DIR/run.duckdb" \
+	"SELECT COUNT(*) FROM run_metadata WHERE key LIKE 'step_done:01-2.chunk:%'")
+[ "$chunks" = "3" ] || fail "expected 3 chunk step_done markers, got $chunks"
+
+step "mmseqs-tblastx chunking: chunk_size=0 (disable) matches default golden"
+NO_CHUNK_DIR="$TEST_TMP/nochunk"
+rm -rf "$NO_CHUNK_DIR"
+./ViPTreeGen --notree --ncpus "$NCPUS" --mmseqs-tblastx-chunk-size 0 \
+             testdata/ssDNA.prok.8.fasta "$NO_CHUNK_DIR"
+diff -u testdata/expected/ssDNA.prok.8.mmseqs-tblastx.sim.matrix \
+        "$NO_CHUNK_DIR/result/all.sim.matrix" \
+	|| fail "chunk_size=0 result differs from default golden"
+
 # ----- --resume: simulated mid-flight kill --------------------------------------
 # Simulate a kill mid-pipeline by deleting the last step's step_done marker, then
 # re-run with --resume and verify the matrix still matches the golden afterwards.

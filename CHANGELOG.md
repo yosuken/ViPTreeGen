@@ -48,6 +48,17 @@ default search engine, schema, and on-disk output structure all change.
   safe, SearchCmd writes the result to `<FILE>.tmp` and `mv`s to `<FILE>`
   only on a zero exit -- a tblastx/blastn killed mid-write leaves a `.tmp`
   but no `<FILE>`, so the batch is re-run cleanly on resume.
+- **`--mmseqs-tblastx-chunk-size INT`** (default 1000) — in `--mode
+  mmseqs-tblastx`, split the query fasta into N-sequence chunks and run
+  `mmseqs search` per chunk. Each chunk gets its own
+  `step_done:01-2.chunk:NNNN` marker so `--resume` can pick up between
+  chunks instead of restarting the whole search. The target DB is built
+  once and shared across all chunks (no extra index-build overhead). At
+  the default chunk size, small datasets (≤1000 seqs) run as a single
+  chunk identical to the old behavior, and large datasets (e.g. ICTV
+  ~6000 seqs) become a 6-chunk pipeline where a killed chunk loses at
+  most a few minutes of work. Pass `0` to disable chunking (one global
+  search). 2D mode keeps its existing two-search flow (not chunked).
 - **`--ref-duckdb PATH`** — with-reference mode. Reuse a previous v2.0 `run.duckdb`
   as the reference set: ref sequences, `self_scores`, and ref-vs-ref `summary_tsv`
   are ATTACHed and copied; only input-vs-input and input-vs-ref are recomputed. The

@@ -102,7 +102,9 @@ $ ViPTreeGen [options] <input fasta> <output dir>
                                                        is required syntactically but ignored at runtime (the input is read
                                                        from cat/all/all.fasta in the existing dir). Parameter integrity is
                                                        enforced: --mode/--evalue/--matrix/--ref-duckdb/etc. must match the
-                                                       prior run, otherwise --resume is rejected.
+                                                       prior run, otherwise --resume is rejected. For --mode mmseqs-tblastx,
+                                                       resume is also chunk-level (per --mmseqs-tblastx-chunk-size). For
+                                                       --mode tblastx/blastn it is batch-level (per per-query/split file).
 
   (with-reference mode)
     --ref-duckdb   [path/run.duckdb]                -- a previous ViPTreeGen run.duckdb that supplies the reference set.

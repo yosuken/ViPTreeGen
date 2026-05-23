@@ -28,6 +28,7 @@ class ViPTreeGen
       # search engine
       mode:                       "mmseqs-tblastx",
       mmseqs_split_memory_limit:  "12G",
+      mmseqs_tblastx_chunk_size:  1000,
 
       # tblastx / mmseqs shared
       cutlen:  100_000,
@@ -125,6 +126,11 @@ class ViPTreeGen
 
                                                               ('mmseqs-blastn' was evaluated and removed -- see
                                                               doc/mmseqs-blastn.md for the slow/insensitive findings.)
+        --mmseqs-tblastx-chunk-size [int]  (default: 1000)  -- split query fasta into N-sequence chunks
+                                                              and run mmseqs search per chunk so that --resume
+                                                              can pick up between chunks (each chunk records a
+                                                              step_done marker in run_metadata). 0 disables
+                                                              chunking (one global search). mmseqs-tblastx mode only.
         --mmseqs-split-memory-limit [size] (default: 12G)   -- peak RAM cap for mmseqs target index (e.g. 12G, 4G).
                                                               Pass through to mmseqs --split-memory-limit. Use a smaller
                                                               value on a memory-constrained host (slower but bounded).
@@ -195,6 +201,12 @@ class ViPTreeGen
       opts.on("--mmseqs-split-memory-limit SIZE",
               "mmseqs --split-memory-limit (default: 12G; pass 0 to disable)") do |v|
         @options[:mmseqs_split_memory_limit] = v
+      end
+      opts.on("--mmseqs-tblastx-chunk-size INT", Integer,
+              "split the query fasta into N-sequence chunks for mmseqs-tblastx so that " \
+              "--resume can pick up between chunks (default: 1000; pass 0 to disable and " \
+              "run one global mmseqs search). mmseqs-tblastx mode only.") do |v|
+        @options[:mmseqs_tblastx_chunk_size] = v
       end
 
       ## tblastx / mmseqs shared
@@ -394,6 +406,7 @@ class ViPTreeGen
       "aalen"                     => @options[:aalen].to_s,
       "mode"                      => @options[:mode],
       "mmseqs_split_memory_limit" => @options[:mmseqs_split_memory_limit],
+      "mmseqs_tblastx_chunk_size" => @options[:mmseqs_tblastx_chunk_size].to_s,
       "twoD"                      => @options[:twoD].to_s,
       "ref_duckdb"                => @options[:ref_duckdb].to_s,
       "resume"                    => @options[:resume] ? "true" : "",

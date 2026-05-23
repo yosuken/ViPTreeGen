@@ -56,6 +56,36 @@ MarkStepDone = lambda do |task_name|
 	)
 end
 
+## Split a FASTA file into chunk files of `chunk_size` sequences each. Returns
+## an Array of chunk paths in order. If `chunk_size <= 0`, returns [fa_path]
+## unchanged (one "chunk" = the whole input, i.e. chunking disabled).
+## Output paths: "#{outdir}/#{label}.chunk.NNNN.fasta" (NNNN = 1-based 4-digit).
+ChunkFasta = lambda do |fa_path, chunk_size, outdir:, label:|
+	return [fa_path] if chunk_size <= 0
+	require "fileutils"
+	FileUtils.mkdir_p(outdir)
+	chunks = []
+	current_fh = nil
+	seq_count_in_chunk = 0
+	chunk_idx = 0
+	IO.foreach(fa_path) do |line|
+		if line.start_with?(">")
+			if current_fh.nil? || seq_count_in_chunk >= chunk_size
+				current_fh.close if current_fh
+				chunk_idx += 1
+				chunk_path = format("%s/%s.chunk.%04d.fasta", outdir, label, chunk_idx)
+				chunks << chunk_path
+				current_fh = File.open(chunk_path, "w")
+				seq_count_in_chunk = 0
+			end
+			seq_count_in_chunk += 1
+		end
+		current_fh.write(line) if current_fh
+	end
+	current_fh.close if current_fh
+	chunks
+end
+
 PrintStatus = lambda do |current, total, status, t|
 	puts ""
 	puts "\e[1;32m===== #{Time.now}\e[0m"
@@ -373,6 +403,13 @@ task :default do
 	## mmseqs target index memory cap (passed to mmseqs `--split-memory-limit`).
 	## Default 12G; user can override via --mmseqs-split-memory-limit.
 	MmseqsSplitMem = ENV["mmseqs_split_memory_limit"].to_s.empty? ? "12G" : ENV["mmseqs_split_memory_limit"]
+	## Query-side chunking for mmseqs-tblastx (default 1000 seqs/chunk).
+	## Each chunk runs a separate `mmseqs search` against the shared target DB and
+	## records its own step_done:01-2.chunk:NNNN marker, so --resume can pick up
+	## between chunks instead of restarting the entire search.  0 disables chunking
+	## (one global search). Only applies in normal / ref mode; 2D mode keeps its
+	## own two-search flow.
+	MmseqsChunkSize = (ENV["mmseqs_tblastx_chunk_size"].to_s.empty? ? 1000 : ENV["mmseqs_tblastx_chunk_size"].to_i)
 	Nthreads = "1".to_i
 	Mem      = Nthreads * 12
 	Qname    = ENV["queue"]||""
@@ -432,14 +469,36 @@ task :default do
 
 		## cleanup partial mid-step state. Steps that completed atomically (in a SQL
 		## transaction) are unaffected; this handles the on-disk artifacts of the
-		## search step (01-2) and the mmseqs tmpdir.
-		sh "rm -rf #{Odir}/mmseqs_tmp 2>/dev/null || true"
+		## search step (01-2) only.
 		unless StepDone.call("01-2.tblastx")
-			## tblastx/blastn mode: SearchCmd writes "<out>.tmp" first and `mv`s to "<out>"
-			## only on success, so "<out>" implies a clean tblastx/blastn exit. Sweep any
-			## orphan ".tmp" files (left by a killed run) and KEEP the cleanly-completed
-			## "<out>" files -- the batch-level filter in 01-2 will skip those.
-			sh "find #{Odir}/node #{Odir}/input -type f -name 'tblastx.out.tmp' -delete 2>/dev/null || true"
+			if UsesMmseqs
+				## mmseqs-tblastx: chunks are gated by step_done:01-2.chunk:NNNN markers.
+				## Preserve m8.NNNN of completed chunks; sweep mmseqs internal state and
+				## partial chunk artifacts so the chunk loop can re-run safely.
+				if Dir.exist?("#{Odir}/mmseqs_tmp")
+					done_chunks = {}
+					DuckDBUtil.query_each(
+						"SELECT key FROM run_metadata WHERE key LIKE 'step_done:01-2.chunk:%'"
+					) do |line|
+						chunk_id = line.strip.sub("step_done:01-2.chunk:", "")
+						done_chunks[chunk_id] = true
+					end
+					require "fileutils"
+					Dir.glob("#{Odir}/mmseqs_tmp/*").each do |path|
+						base = File.basename(path)
+						next if base =~ /^m8\.(\d+)$/ && done_chunks[$1]
+						File.directory?(path) ? FileUtils.rm_rf(path) : File.delete(path)
+					end
+					puts "\e[1;36m### resume: kept #{done_chunks.size} completed mmseqs chunk(s); " \
+					     "swept partial mmseqs state\e[0m"
+				end
+			else
+				## tblastx/blastn mode: SearchCmd writes "<out>.tmp" first and `mv`s to "<out>"
+				## only on success, so "<out>" implies a clean tblastx/blastn exit. Sweep any
+				## orphan ".tmp" files (left by a killed run) and KEEP the cleanly-completed
+				## "<out>" files -- the batch-level filter in 01-2 will skip those.
+				sh "find #{Odir}/node #{Odir}/input -type f -name 'tblastx.out.tmp' -delete 2>/dev/null || true"
+			end
 		end
 	end
 
@@ -895,21 +954,9 @@ task "01-2.tblastx", ["step"] do |t, args|
 		## per-step mmseqs logs land in cat/all/ so FinalLogCleanup can ingest them into the `logs` table.
 		ldir = "#{Odir}/cat/all"
 
-		if RefMode
-			## with-reference mode: build a query DB from input.fasta only, then run
-			## `mmseqs search input_db all_db` so the result HSPs cover input×input and
-			## input×ref pairs (ref×ref came from ref-duckdb already, via 01-1.ref.prep).
-			input_fa = "#{ldir}/input.fasta"
-			input_db = "#{Fa}.input.mmdb"
-			res = "#{tmpdir}/result"
-			m8  = "#{tmpdir}/result.m8"
-			sh BuildDBCmd.call(mode: Mode, fasta: input_fa, db_path: input_db,
-			                   log: "#{input_fa}.createdb.log", create_index: false)
-			sh "mmseqs search #{input_db} #{DB} #{res} #{tmpdir}/s #{search_opts} >#{ldir}/mmseqs_search.log 2>&1"
-			sh "mmseqs convertalis #{input_db} #{DB} #{res} #{m8} --format-output #{fmt} >#{ldir}/mmseqs_convertalis.log 2>&1"
-			sh "ruby #{m8_split} #{m8} #{Odir}/node"
-		elsif File.exist?(Flen_i)
-			## 2D mode: query (node) vs all, and input vs input self-blast.
+		if File.exist?(Flen_i)
+			## 2D mode: query (node) vs all, and input vs input self-blast. Not chunked --
+			## 2D queries are typically small and the two-search structure complicates chunking.
 			query_db = "#{Fa}.query.mmdb"
 			input_db = "#{Fa}.input.mmdb"
 			res_node  = "#{tmpdir}/result.node"
@@ -924,12 +971,39 @@ task "01-2.tblastx", ["step"] do |t, args|
 			sh "ruby #{m8_split} #{m8_node}  #{Odir}/node"
 			sh "ruby #{m8_split} #{m8_input} #{Odir}/input"
 		else
-			## normal mode: all-vs-all in one search.
-			res = "#{tmpdir}/result"
-			m8  = "#{tmpdir}/result.m8"
-			sh "mmseqs search #{DB} #{DB} #{res} #{tmpdir}/s #{search_opts} >#{ldir}/mmseqs_search.log 2>&1"
-			sh "mmseqs convertalis #{DB} #{DB} #{res} #{m8} --format-output #{fmt} >#{ldir}/mmseqs_convertalis.log 2>&1"
-			sh "ruby #{m8_split} #{m8} #{Odir}/node"
+			## normal & with-reference mode: query side is chunked (default 1000 seqs/chunk)
+			## so --resume can pick up between chunks. The target DB is shared across all
+			## chunks (built once in 01-1), so createdb/createindex overhead is paid once.
+			query_fa = RefMode ? "#{ldir}/input.fasta" : Fa
+			chunks = ChunkFasta.call(query_fa, MmseqsChunkSize, outdir: tmpdir, label: "q")
+			m8_files = []
+			puts "\e[1;36m### mmseqs-tblastx: #{chunks.size} query chunk(s) (chunk_size=#{MmseqsChunkSize})\e[0m"
+			chunks.each_with_index do |chunk_fa, i|
+				chunk_id   = format("%04d", i + 1)
+				chunk_task = "01-2.chunk:#{chunk_id}"
+				chunk_db   = "#{tmpdir}/q.#{chunk_id}.mmdb"
+				res        = "#{tmpdir}/result.#{chunk_id}"
+				m8         = "#{tmpdir}/m8.#{chunk_id}"
+
+				if Resume && StepDone.call(chunk_task)
+					puts "\e[1;36m### resume: chunk #{chunk_id} (#{chunks.size} total) already done -- skip\e[0m"
+					m8_files << m8
+					next
+				end
+
+				sh BuildDBCmd.call(mode: Mode, fasta: chunk_fa, db_path: chunk_db,
+				                   log: "#{ldir}/mmseqs_createdb.#{chunk_id}.log", create_index: false)
+				sh "mmseqs search      #{chunk_db} #{DB} #{res} #{tmpdir}/s.#{chunk_id} #{search_opts} >#{ldir}/mmseqs_search.#{chunk_id}.log 2>&1"
+				sh "mmseqs convertalis #{chunk_db} #{DB} #{res} #{m8} --format-output #{fmt} >#{ldir}/mmseqs_convertalis.#{chunk_id}.log 2>&1"
+				MarkStepDone.call(chunk_task)
+				m8_files << m8
+			end
+
+			## concatenate all chunk m8 outputs and split by qid (single global m8_split
+			## pass; each chunk's m8 is qid-grouped and chunks are non-overlapping in qids,
+			## so the single-file-handle stream-split inside m8_split.rb still works).
+			sh "cat #{m8_files.join(' ')} > #{tmpdir}/m8.all"
+			sh "ruby #{m8_split} #{tmpdir}/m8.all #{Odir}/node"
 		end
 		sh "rm -rf #{tmpdir}"
 	end
