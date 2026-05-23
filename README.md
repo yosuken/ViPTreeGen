@@ -16,8 +16,8 @@ The proteomic tree approach is effective to investigate genomes of newly sequenc
 ViPTreeGen has been developed as a part of [the ViPTree server project](http://www.genome.jp/viptree).
 
 ## requirements
-* MMseqs2 (only when `--mode mmseqs-tblastx`, the default)
-* BLAST+ (only when `--mode tblastx`)
+* MMseqs2 (when `--mode mmseqs-tblastx`, the default)
+* BLAST+ (when `--mode tblastx` or `--mode blastn`)
 * Ruby (ver >=2.0; tested with 2.x/3.x/4.x)
 * R (ver >=3.0)
 * DuckDB CLI (ver >=1.0) -- aggregates run state into `${outdir}/run.duckdb`
@@ -172,6 +172,22 @@ Both modes compute the same kind of result: translated 6-frame all-vs-all alignm
 | Result fidelity | reference for v2.0+ | NOT bit-identical to mmseqs-tblastx; matches pre-v2.0 byte-for-byte. SG matrix Pearson r typically > 0.99 between the two engines |
 
 Result fidelity caveat: the two engines differ algorithmically (different matrices, heuristics, score normalization), so SG scores do not match bit-for-bit. The proteomic-tree topology is preserved (only a few branch swaps in deep clades). Choose `--mode tblastx` if you need to compare against pre-v2.0 runs; otherwise stay on the default `mmseqs-tblastx`.
+
+### 2b. `--mode blastn` — nucleotide tree (DiGAlign backend)
+
+In addition to the two proteomic-tree modes above, ViPTreeGen v2.0 supports nucleotide-vs-nucleotide search for use as the backend of the **DiGAlign** web tool. The output structure is identical (`result/all.{sim,dist}.matrix` + Newick tree), but the tree is a **nucleotide-identity tree, NOT a proteomic tree** — biological interpretation differs.
+
+```
+ViPTreeGen --mode blastn [options] <input.fasta> <output dir>
+```
+
+Notes:
+
+- Feeds the same SG-style scoring pipeline (Rust binary → DuckDB → matrix) as the proteomic-tree modes, but at the nucleotide level.
+- `--matrix` is **ignored** (blastn uses its `-reward`/`-penalty` defaults).
+- `--min-aalen` filter is in **nucleotide units** in this mode (despite the option name); the default `30` is very lenient for nucleotide alignments. Consider raising it (e.g., `--min-aalen 90`) for stricter HSP filtering.
+- Use the proteomic-tree modes (`tblastx` / `mmseqs-tblastx`) for **ViPTree** analyses; use this mode for **DiGAlign** analyses.
+- An `mmseqs-blastn` mode was evaluated (mmseqs `--search-type 3`) but removed — at our typical input size it was ~9× slower than `blastn`, used ~80× more RAM, and was ~16% less sensitive (Pearson r ≈ 0.70 vs `blastn`). See [`doc/mmseqs-blastn.md`](doc/mmseqs-blastn.md) for the full evaluation.
 
 A `search_mode` row is written to `run.duckdb`'s `run_metadata` table so each output dir self-documents which engine produced it:
 ```

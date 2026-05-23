@@ -87,7 +87,7 @@ FinalLogCleanup = lambda do
 
 	## mmseqs per-stage logs ingest into `logs` (source = "mmseqs:<stage>"), then delete.
 	## Files come from 01-1 (createdb logs) and 01-2 (search/convertalis logs).
-	if Mode == "mmseqs-tblastx"
+	if UsesMmseqs
 		mmseqs_logs = Dir["#{Odir}/cat/all/mmseqs_*.log"] +
 		              Dir["#{Odir}/cat/all/*.fasta.createdb.log"]
 		unless mmseqs_logs.empty?
@@ -188,9 +188,27 @@ end
 ## for `sh`. `db_path` is the prefix that subsequent search commands will pass
 ## as `-db` / target: in tblastx mode this equals `fasta`, in mmseqs mode it has
 ## a `.mmdb` suffix so it does not collide with the FASTA file.
-BuildDBCmd = lambda do |mode:, fasta:, db_path:, log:, create_index: false|
-	case mode
+## Build a BLAST+ search command for one (query, db, out, log) tuple. Used by 01-1 /
+## 01-1.2D / 01-1.ref.prep to populate per-node batch files. mmseqs-* modes do their
+## search in 01-2 (single global call) and never enter this helper.
+SearchCmd = lambda do |query:, db:, out:, log:|
+	case Mode
 	when "tblastx"
+		"tblastx -dbsize #{DBsize} -matrix #{Matrix} -max_target_seqs #{Max_target_seqs} " \
+		"-num_threads #{Nthreads} -evalue #{Evalue} -outfmt 6 -db #{db} -query #{query} -out #{out} 2>#{log}"
+	when "blastn"
+		"blastn -dbsize #{DBsize} -max_target_seqs #{Max_target_seqs} " \
+		"-num_threads #{Nthreads} -evalue #{Evalue} -outfmt 6 -db #{db} -query #{query} -out #{out} 2>#{log}"
+	else
+		raise "SearchCmd: unsupported Mode '#{Mode}' for per-batch search (mmseqs-* modes use one global call in 01-2)"
+	end
+end
+
+BuildDBCmd = lambda do |mode:, fasta:, db_path:, log:, create_index: false|
+	## All search modes here run against a nucleotide DB (tblastx does on-the-fly
+	## translation; mmseqs-tblastx similarly. The DB itself stays nucleotide.)
+	case mode
+	when "tblastx", "blastn"
 		"makeblastdb -dbtype nucl -in #{fasta} -out #{db_path} -title #{File.basename(fasta)} 2>#{log}"
 	when "mmseqs-tblastx"
 		idx_tmp = "#{File.dirname(db_path)}/mmseqs_idx_tmp.#{File.basename(db_path)}"
@@ -231,6 +249,8 @@ CheckVersion = lambda do |commands|
 						%|makeblastdb -version 2>&1|
 					when "tblastx"
 						%|tblastx -version 2>&1|
+					when "blastn"
+						%|blastn -version 2>&1|
 					when "R"
 						%|LANG=C R --version 2>&1|
 					when "ape"
@@ -300,13 +320,21 @@ task :default do
 	DBsize   = ENV["dbsize"]      ## default: 200,000,000
 	Matrix   = ENV["matrix"]      ## default: BLOSUM45
 	Evalue   = ENV["evalue"]      ## default: 1e-2
-	Mode     = ENV["mode"] || "mmseqs-tblastx"   ## search engine: mmseqs --search-type 4 (default) or tblastx
-	raise("`--mode #{Mode}': must be 'tblastx' or 'mmseqs-tblastx'") unless %w|tblastx mmseqs-tblastx|.include?(Mode)
+	## Search engine + algorithm pairing.
+	##   - tblastx        : NCBI BLAST+ tblastx        (translated 6-frame, protein-level scoring) -- proteomic tree
+	##   - mmseqs-tblastx : MMseqs2 --search-type 4    (translated 6-frame, protein-level scoring) -- proteomic tree (default)
+	##   - blastn         : NCBI BLAST+ blastn         (nucleotide-vs-nucleotide)                  -- nucleotide tree (DiGAlign backend)
+	## ('mmseqs-blastn' was evaluated and removed; see doc/mmseqs-blastn.md.)
+	Mode     = ENV["mode"] || "mmseqs-tblastx"
+	valid_modes = %w|tblastx mmseqs-tblastx blastn|
+	raise("`--mode #{Mode}': must be one of #{valid_modes.join(', ')}") unless valid_modes.include?(Mode)
+	## Convenience flag: true for mmseqs-tblastx (single global search in 01-2 instead of per-(node,split) batches).
+	UsesMmseqs = (Mode == "mmseqs-tblastx")
 	## with-reference mode: previous-run `run.duckdb` providing ref sequences, self_scores, summary_tsv.
 	RefDuckDB = ENV["ref_duckdb"].to_s
 	RefMode   = !RefDuckDB.empty?
-	## In mmseqs mode the search DB uses a different prefix; in tblastx mode it equals the FASTA path.
-	DB       = (Mode == "mmseqs-tblastx") ? "#{Fa}.mmdb" : Fa
+	## In mmseqs modes the search DB uses a different prefix; in BLAST+ modes it equals the FASTA path.
+	DB       = UsesMmseqs ? "#{Fa}.mmdb" : Fa
 	## mmseqs target index memory cap (passed to mmseqs `--split-memory-limit`).
 	## Default 12G; user can override via --mmseqs-split-memory-limit.
 	MmseqsSplitMem = ENV["mmseqs_split_memory_limit"].to_s.empty? ? "12G" : ENV["mmseqs_split_memory_limit"]
@@ -321,7 +349,13 @@ task :default do
 	TreeMethod = ENV["method"]||"bionj"
 
 	### check version
-	engine_cmds = (Mode == "mmseqs-tblastx") ? %w|mmseqs| : %w|tblastx makeblastdb|
+	engine_cmds = if UsesMmseqs
+		%w|mmseqs|
+	elsif Mode == "tblastx"
+		%w|tblastx makeblastdb|
+	else  # blastn
+		%w|blastn makeblastdb|
+	end
 	commands    = engine_cmds + %w|duckdb viptreegen-summary-pre R ape phangorn ruby|
 	commands += %w|parallel| if Ncpus != ""
 	CheckVersion.call(commands)
@@ -397,16 +431,20 @@ task "01-1.2D.prep_for_tblastx", ["step"] do |t, args|
 			n1dir = "#{Odir}/#{type}/#{lab}/blast"; mkdir_p n1dir
 
 			fque   = "#{n0dir}/#{lab}.fasta"
-			self_db = (Mode == "mmseqs-tblastx") ? "#{fque}.mmdb" : fque
+			self_db = (UsesMmseqs) ? "#{fque}.mmdb" : fque
 			open(fque, "w"){ |_fque|
 				_fque.puts [">"+lab, seq.scan(/.{1,70}/)]
 			}
 
-			if Mode == "tblastx" && type == "input"
-				## per-input self-DB; only needed in tblastx mode (mmseqs uses input-vs-input bulk search)
+			if !UsesMmseqs && type == "input"
+				## per-input self-DB; needed in BLAST+ modes (tblastx / blastn) for input self-blast.
+				## mmseqs uses one bulk input-vs-input search instead.
 				sh BuildDBCmd.call(mode: Mode, fasta: fque, db_path: self_db,
 				                   log: "#{fque}.makeblastdb.log", create_index: false)
 			end
+
+			## mmseqs runs one global search in 01-2 -- skip per-(node, split) batch generation.
+			next if UsesMmseqs
 
 			if len > Cutlen
 				n0dir_s = "#{n0dir}/split"; mkdir_p n0dir_s
@@ -424,19 +462,13 @@ task "01-1.2D.prep_for_tblastx", ["step"] do |t, args|
 					_out  = "#{n1dir_s}/tblastx.out"
 					_log  = "#{n1dir_s}/tblastx.log"
 					_db   = (type == "input") ? self_db : DB
-					outs << "tblastx -dbsize #{DBsize} -matrix #{Matrix} -max_target_seqs #{Max_target_seqs} -num_threads #{Nthreads} \
-					-evalue #{Evalue} -outfmt 6 -db #{_db} -query #{fspt} -out #{_out} 2>#{_log}".gsub(/\s+/, " ")
+					outs << SearchCmd.call(query: fspt, db: _db, out: _out, log: _log)
 				end
 			else
 				_out = "#{n1dir}/tblastx.out"
 				_log = "#{n1dir}/tblastx.log"
-				if type == "input"
-					outs << "tblastx -dbsize #{DBsize} -matrix #{Matrix} -max_target_seqs #{Max_target_seqs} -num_threads #{Nthreads} \
-					-evalue #{Evalue} -outfmt 6 -db #{self_db} -query #{fque} -out #{_out} 2>#{_log}".gsub(/\s+/, " ")
-				else
-					outs << "tblastx -dbsize #{DBsize} -matrix #{Matrix} -max_target_seqs #{Max_target_seqs} -num_threads #{Nthreads} \
-					-evalue #{Evalue} -outfmt 6 -db #{DB} -query #{fque} -out #{_out} 2>#{_log}".gsub(/\s+/, " ")
-				end
+				_db  = (type == "input") ? self_db : DB
+				outs << SearchCmd.call(query: fque, db: _db, out: _out, log: _log)
 			end
 		}
 	}
@@ -445,26 +477,26 @@ task "01-1.2D.prep_for_tblastx", ["step"] do |t, args|
 	WriteBatch.call(outs, jdir, t)
 
 	## build target DB for all.fasta (createindex for mmseqs to amortize per-query lookups)
-	sh BuildDBCmd.call(mode: Mode, fasta: Fa, db_path: DB, log: log, create_index: (Mode == "mmseqs-tblastx"))
+	sh BuildDBCmd.call(mode: Mode, fasta: Fa, db_path: DB, log: log, create_index: (UsesMmseqs))
 
 	## mmseqs 2D mode: build query.fasta / input.fasta DBs for the two separate searches.
 	## (tblastx mode uses per-input self-DBs created inline above; mmseqs path replaces
 	## that pattern with one input-vs-input bulk search.)
-	if Mode == "mmseqs-tblastx"
+	if UsesMmseqs
 		query_fa = "#{Odir}/cat/all/query.fasta"
 		input_fa = "#{Odir}/cat/all/input.fasta"
 		open(query_fa, "w") { |f| lab2seq_q.each { |l, s| f.puts ">"+l, s.scan(/.{1,70}/) } }
 		open(input_fa, "w") { |f| lab2seq_i.each { |l, s| f.puts ">"+l, s.scan(/.{1,70}/) } }
-		sh BuildDBCmd.call(mode: "mmseqs-tblastx", fasta: query_fa, db_path: "#{Fa}.query.mmdb",
+		sh BuildDBCmd.call(mode: Mode, fasta: query_fa, db_path: "#{Fa}.query.mmdb",
 		                   log: "#{query_fa}.createdb.log", create_index: false)
-		sh BuildDBCmd.call(mode: "mmseqs-tblastx", fasta: input_fa, db_path: "#{Fa}.input.mmdb",
+		sh BuildDBCmd.call(mode: Mode, fasta: input_fa, db_path: "#{Fa}.input.mmdb",
 		                   log: "#{input_fa}.createdb.log", create_index: true)
 	end
 
 	## populate DuckDB: sequences (query = kind 'node', input = kind 'input') + makeblastdb.log
 	IngestSequences.call(lab2seq_q.keys, lab2seq_q, kind: "node")
 	IngestSequences.call(lab2seq_i.keys, lab2seq_i, kind: "input")
-	DuckDBUtil.ingest_log(log, source: (Mode == "mmseqs-tblastx" ? "mmseqs:all.createdb" : "makeblastdb"))
+	DuckDBUtil.ingest_log(log, source: (UsesMmseqs ? "mmseqs:all.createdb" : "makeblastdb"))
 end
 desc "01-1.ref.prep"
 task "01-1.ref.prep", ["step"] do |t, args|
@@ -586,7 +618,7 @@ task "01-1.ref.prep", ["step"] do |t, args|
 		fque = "#{n0dir}/#{lab}.fasta"
 		open(fque, "w") { |f| f.puts [">"+lab, seq.scan(/.{1,70}/)] }
 
-		next unless Mode == "tblastx"   # mmseqs uses one global search; no per-node batches
+		next if UsesMmseqs   # mmseqs runs one global search in 01-2; no per-node batches
 
 		if len > Cutlen
 			n0dir_s = "#{n0dir}/split"; mkdir_p n0dir_s
@@ -599,14 +631,12 @@ task "01-1.ref.prep", ["step"] do |t, args|
 				n1dir_s = "#{n1dir}/split/#{idx}"; mkdir_p n1dir_s
 				_out = "#{n1dir_s}/tblastx.out"
 				_log = "#{n1dir_s}/tblastx.log"
-				outs << "tblastx -dbsize #{DBsize} -matrix #{Matrix} -max_target_seqs #{Max_target_seqs} -num_threads #{Nthreads} \
-				-evalue #{Evalue} -outfmt 6 -db #{DB} -query #{fspt} -out #{_out} 2>#{_log}".gsub(/\s+/, " ")
+				outs << SearchCmd.call(query: fspt, db: DB, out: _out, log: _log)
 			end
 		else
 			_out = "#{n1dir}/tblastx.out"
 			_log = "#{n1dir}/tblastx.log"
-			outs << "tblastx -dbsize #{DBsize} -matrix #{Matrix} -max_target_seqs #{Max_target_seqs} -num_threads #{Nthreads} \
-			-evalue #{Evalue} -outfmt 6 -db #{DB} -query #{fque} -out #{_out} 2>#{_log}".gsub(/\s+/, " ")
+			outs << SearchCmd.call(query: fque, db: DB, out: _out, log: _log)
 		end
 	end
 
@@ -614,8 +644,8 @@ task "01-1.ref.prep", ["step"] do |t, args|
 	WriteBatch.call(outs, jdir, t)
 
 	## --- 11. build engine DB on combined all.fasta -------------------------
-	sh BuildDBCmd.call(mode: Mode, fasta: Fa, db_path: DB, log: log, create_index: (Mode == "mmseqs-tblastx"))
-	DuckDBUtil.ingest_log(log, source: (Mode == "mmseqs-tblastx" ? "mmseqs:all.createdb" : "makeblastdb"))
+	sh BuildDBCmd.call(mode: Mode, fasta: Fa, db_path: DB, log: log, create_index: UsesMmseqs)
+	DuckDBUtil.ingest_log(log, source: (UsesMmseqs ? "mmseqs:all.createdb" : "makeblastdb"))
 end
 
 desc "01-1.prep_for_tblastx"
@@ -649,7 +679,7 @@ task "01-1.prep_for_tblastx", ["step"] do |t, args|
 				fall.puts [">"+lab, seq.scan(/.{1,70}/)]
 
 				# make node output
-				# split fasta and make tblastx job
+				# split fasta and make tblastx/blastn job
 				n0dir = "#{Odir}/node/#{lab}/seq";   mkdir_p n0dir
 				n1dir = "#{Odir}/node/#{lab}/blast"; mkdir_p n1dir
 
@@ -657,6 +687,10 @@ task "01-1.prep_for_tblastx", ["step"] do |t, args|
 				open(fque, "w"){ |_fque|
 					_fque.puts [">"+lab, seq.scan(/.{1,70}/)]
 				}
+
+				## mmseqs runs one global search in 01-2 -- skip per-(node, split) batch generation.
+				## m8_split.rb in 01-2 will create blast/tblastx.out files on demand.
+				next if UsesMmseqs
 
 				if len > Cutlen
 					n0dir_s = "#{n0dir}/split"; mkdir_p n0dir_s
@@ -673,14 +707,12 @@ task "01-1.prep_for_tblastx", ["step"] do |t, args|
 						n1dir_s = "#{n1dir}/split/#{idx}"; mkdir_p n1dir_s
 						_out  = "#{n1dir_s}/tblastx.out"
 						_log  = "#{n1dir_s}/tblastx.log"
-						outs << "tblastx -dbsize #{DBsize} -matrix #{Matrix} -max_target_seqs #{Max_target_seqs} -num_threads #{Nthreads} \
-						-evalue #{Evalue} -outfmt 6 -db #{DB} -query #{fspt} -out #{_out} 2>#{_log}".gsub(/\s+/, " ")
+						outs << SearchCmd.call(query: fspt, db: DB, out: _out, log: _log)
 					end
 				else
 					_out = "#{n1dir}/tblastx.out"
 					_log = "#{n1dir}/tblastx.log"
-					outs << "tblastx -dbsize #{DBsize} -matrix #{Matrix} -max_target_seqs #{Max_target_seqs} -num_threads #{Nthreads} \
-					-evalue #{Evalue} -outfmt 6 -db #{DB} -query #{fque} -out #{_out} 2>#{_log}".gsub(/\s+/, " ")
+					outs << SearchCmd.call(query: fque, db: DB, out: _out, log: _log)
 				end
 			}
 		}
@@ -690,11 +722,11 @@ task "01-1.prep_for_tblastx", ["step"] do |t, args|
 	WriteBatch.call(outs, jdir, t)
 
 	## build target DB for all.fasta (createindex for mmseqs to amortize per-query lookups)
-	sh BuildDBCmd.call(mode: Mode, fasta: Fa, db_path: DB, log: log, create_index: (Mode == "mmseqs-tblastx"))
+	sh BuildDBCmd.call(mode: Mode, fasta: Fa, db_path: DB, log: log, create_index: (UsesMmseqs))
 
 	## populate DuckDB: sequences + makeblastdb.log (file kept for backward compat in P0)
 	IngestSequences.call(lab2seq.keys, lab2seq, kind: "node")
-	DuckDBUtil.ingest_log(log, source: (Mode == "mmseqs-tblastx" ? "mmseqs:all.createdb" : "makeblastdb"))
+	DuckDBUtil.ingest_log(log, source: (UsesMmseqs ? "mmseqs:all.createdb" : "makeblastdb"))
 end
 desc "01-2.tblastx"
 task "01-2.tblastx", ["step"] do |t, args|
@@ -707,16 +739,17 @@ task "01-2.tblastx", ["step"] do |t, args|
 	PrintStatus.call(args.step, NumStep, "START", t)
 
 	case Mode
-	when "tblastx"
+	when "tblastx", "blastn"
 		jdir = "#{Odir}/batch/01-1" # output from 01-1
 		RunBatch.call(jdir, Qname, Nthreads, Mem, Wtime, Ncpus)
 
 	when "mmseqs-tblastx"
-		## mmseqs2's built-in scoring matrices are blosum50/62/80 (default BLOSUM62 for translated mode).
-		## ViPTreeGen targets *divergent* virus genomes, for which BLOSUM45 is more sensitive than BLOSUM62,
-		## so we ship blosum45.out (mmseqs2 format, from the upstream MMseqs2 repo, freely redistributable)
-		## under data/ and pass it via --sub-mat. This also keeps tblastx and mmseqs-tblastx on the same
-		## substitution matrix so their SG scores agree more tightly.
+		## mmseqs --search-type 4 = translated 6-frame protein alignment. Defaults BLOSUM62,
+		## but ViPTreeGen targets divergent viral genomes for which BLOSUM45 is more sensitive,
+		## so we ship blosum45.out (mmseqs2 format, freely redistributable) under data/ and pass
+		## it via --sub-mat. This also keeps tblastx and mmseqs-tblastx on the same substitution
+		## matrix so their SG scores agree tightly. (mmseqs-blastn was evaluated and removed --
+		## see doc/mmseqs-blastn.md.)
 		require "fileutils"
 		threads = Ncpus != "" ? Ncpus : "1"
 		tmpdir  = "#{Odir}/mmseqs_tmp"; FileUtils.mkdir_p(tmpdir)
@@ -725,7 +758,7 @@ task "01-2.tblastx", ["step"] do |t, args|
 		sub_mat_path = "#{File.dirname(__FILE__)}/data/#{Matrix.downcase}.out"
 		unless File.file?(sub_mat_path)
 			raise "\e[1;31mError:\e[0m mmseqs substitution matrix not found: #{sub_mat_path}. " \
-			      "Bundled matrices live under data/ in the repo; ensure your --matrix option matches one of them."
+			      "Bundled matrices live under data/ in the repo; ensure --matrix matches one of them."
 		end
 		## `--split-memory-limit X` caps the peak RAM mmseqs uses for the target index; if the
 		## index would exceed X, mmseqs auto-splits the search into multiple passes. Default 12G.
@@ -744,7 +777,7 @@ task "01-2.tblastx", ["step"] do |t, args|
 			input_db = "#{Fa}.input.mmdb"
 			res = "#{tmpdir}/result"
 			m8  = "#{tmpdir}/result.m8"
-			sh BuildDBCmd.call(mode: "mmseqs-tblastx", fasta: input_fa, db_path: input_db,
+			sh BuildDBCmd.call(mode: Mode, fasta: input_fa, db_path: input_db,
 			                   log: "#{input_fa}.createdb.log", create_index: false)
 			sh "mmseqs search #{input_db} #{DB} #{res} #{tmpdir}/s #{search_opts} >#{ldir}/mmseqs_search.log 2>&1"
 			sh "mmseqs convertalis #{input_db} #{DB} #{res} #{m8} --format-output #{fmt} >#{ldir}/mmseqs_convertalis.log 2>&1"

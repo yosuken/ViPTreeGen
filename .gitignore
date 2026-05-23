@@ -14,8 +14,12 @@
 *~
 .nfs*
 
-### test input and output directory
+### ad-hoc test output directories (e.g. /test_v2/, /test_run/) -- but DO track
+### /testdata/ (committed reference inputs + golden outputs) and /test.sh
+### (the smoke-test script CI delegates to).
 /test*
+!/testdata/
+!/test.sh
 
 ### Rust build artifacts (new in v2.0.0)
 rust/target/

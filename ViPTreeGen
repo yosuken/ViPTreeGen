@@ -87,9 +87,9 @@ class ViPTreeGen
     - <output dir> should not exist.
 
     \e[1;32m[dependencies]\e[0m
-        - mmseqs2 (>=13.45111)    -- MMseqs2 (required only when --mode mmseqs-tblastx, the default);
+        - mmseqs2 (>=13.45111)    -- MMseqs2 (required for --mode mmseqs-tblastx, the default);
                                      https://github.com/soedinglab/MMseqs2
-        - tblastx                 -- BLAST+ program (required only when --mode tblastx);
+        - tblastx / blastn        -- in NCBI BLAST+ (required for --mode tblastx or --mode blastn);
                                      https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download
         - ruby (ver >=2.0)        -- orchestration; tested with 2.x/3.x/4.x
         - duckdb (>=1.0)          -- CLI; used to aggregate run state into ${outdir}/run.duckdb
@@ -107,15 +107,21 @@ class ViPTreeGen
         -v, --version
 
       (search engine)
-        --mode         [mmseqs-tblastx|tblastx] (default: mmseqs-tblastx)
-                                                           -- engine for the translated-nucleotide 6-frame all-vs-all
-                                                              search. Both modes compute biologically-equivalent
-                                                              tblastx-style HSPs; they differ only in implementation.
-                                                              'mmseqs-tblastx' (default) uses MMseqs2 with
-                                                              `--search-type 4`; generally ~10x faster than tblastx
-                                                              but results are not bit-identical. 'tblastx' invokes
-                                                              the legacy NCBI BLAST+ tblastx binary (slower; needed
-                                                              for byte-exact reproduction of pre-v2.0 outputs).
+        --mode  [mmseqs-tblastx|tblastx|blastn] (default: mmseqs-tblastx)
+                                                           -- search engine x algorithm.
+                                                              'mmseqs-tblastx' (default) : MMseqs2 --search-type 4,
+                                                                                           translated 6-frame; proteomic
+                                                                                           tree (ViPTree); ~10x faster
+                                                                                           than tblastx.
+                                                              'tblastx'                  : NCBI BLAST+ tblastx, translated
+                                                                                           6-frame; proteomic tree
+                                                                                           (byte-exact pre-v2.0 reproduction).
+                                                              'blastn'                   : NCBI BLAST+ blastn, nucleotide-vs-
+                                                                                           nucleotide; nucleotide tree
+                                                                                           (DiGAlign backend).
+
+                                                              ('mmseqs-blastn' was evaluated and removed -- see
+                                                              doc/mmseqs-blastn.md for the slow/insensitive findings.)
         --mmseqs-split-memory-limit [size] (default: 12G)   -- peak RAM cap for mmseqs target index (e.g. 12G, 4G).
                                                               Pass through to mmseqs --split-memory-limit. Use a smaller
                                                               value on a memory-constrained host (slower but bounded).
@@ -178,7 +184,9 @@ class ViPTreeGen
       opts.banner = usage
 
       ## search engine
-      opts.on("--mode MODE", "search engine: tblastx|mmseqs-tblastx (default: mmseqs-tblastx)") do |v|
+      opts.on("--mode MODE",
+              "search engine x algorithm. proteomic-tree: tblastx|mmseqs-tblastx. " \
+              "nucleotide-tree (DiGAlign backend): blastn. (default: mmseqs-tblastx)") do |v|
         @options[:mode] = v
       end
       opts.on("--mmseqs-split-memory-limit SIZE",
@@ -246,8 +254,9 @@ class ViPTreeGen
       $stderr.puts "#{ERRMSG} output directory already exists (#{@dir})"
       exit 1
     end
-    unless %w[tblastx mmseqs-tblastx].include?(@options[:mode])
-      $stderr.puts "#{ERRMSG} --mode must be 'tblastx' or 'mmseqs' (got: '#{@options[:mode]}')"
+    valid_modes = %w[tblastx mmseqs-tblastx blastn]
+    unless valid_modes.include?(@options[:mode])
+      $stderr.puts "#{ERRMSG} --mode must be one of #{valid_modes.join(', ')} (got: '#{@options[:mode]}')"
       exit 1
     end
     if @options[:twoD] && !File.file?(@options[:twoD])
@@ -273,6 +282,9 @@ class ViPTreeGen
     when "tblastx"
       check_cmd("tblastx",     "in BLAST+ package; required for --mode tblastx")
       check_cmd("makeblastdb", "in BLAST+ package; required for --mode tblastx")
+    when "blastn"
+      check_cmd("blastn",      "in BLAST+ package; required for --mode blastn (DiGAlign backend)")
+      check_cmd("makeblastdb", "in BLAST+ package; required for --mode blastn")
     when "mmseqs-tblastx"
       check_cmd("mmseqs",      "MMseqs2; required for --mode mmseqs-tblastx")
     end

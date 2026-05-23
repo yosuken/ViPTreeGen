@@ -1,0 +1,101 @@
+# Changelog
+
+All notable changes to ViPTreeGen are recorded here.
+
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and ViPTreeGen
+uses [semantic versioning](https://semver.org/). The DuckDB `run.duckdb` schema is versioned
+independently via the `schema_version` row in `run_metadata` and bumps follow the same
+breaking-vs-additive rule (a `schema_version` major bump means previously-generated
+`run.duckdb` files are not accepted by the new release, e.g. as `--ref-duckdb` input).
+
+## [Unreleased] — v2.0.0
+
+Major performance + capability overhaul. Backward-compatible CLI by default, but the
+default search engine, schema, and on-disk output structure all change.
+
+### Breaking
+- **DuckDB schema bumped to 2.0** (`schema_version` in `run_metadata`). The `sequences`
+  table gains a `seq VARCHAR NOT NULL` column holding the actual nucleotide sequence,
+  so a `run.duckdb` is now self-sufficient as a reference set without the original
+  FASTA alongside. `run.duckdb` produced by v1.x is *not* accepted by `--ref-duckdb`.
+- **Intermediate tables removed.** `blast_hits`, `blast_hits_filtered`, and
+  `sbed_entries` are gone — the Rust binary streams that work in memory and writes
+  only the final `summary_pre`. Anything that queried those tables must be ported.
+- **Default `--mode` changed from `tblastx` to `mmseqs-tblastx`**. Result matrices are
+  no longer bit-identical to v1.x by default. Pass `--mode tblastx` to reproduce
+  pre-v2.0 numbers byte-for-byte.
+
+### Added
+- **`--mode {mmseqs-tblastx|tblastx|blastn}`** — search engine + algorithm choice.
+  - `mmseqs-tblastx` (default): MMseqs2 `--search-type 4`, translated 6-frame protein
+    alignment. ~10× faster than legacy tblastx on EVG (1811 viral genomes:
+    12.5 min vs 145 min). Proteomic tree.
+  - `tblastx`: legacy NCBI BLAST+ tblastx. Slow, byte-exact pre-v2.0 reproduction.
+  - `blastn`: NCBI BLAST+ nucleotide-vs-nucleotide. Backend for the DiGAlign web tool —
+    output is a *nucleotide tree*, NOT a proteomic tree. `mmseqs-blastn` was evaluated
+    and removed; see `doc/mmseqs-blastn.md`.
+- **`--ref-duckdb PATH`** — with-reference mode. Reuse a previous v2.0 `run.duckdb`
+  as the reference set: ref sequences, `self_scores`, and ref-vs-ref `summary_tsv`
+  are ATTACHed and copied; only input-vs-input and input-vs-ref are recomputed. The
+  output matrix and tree cover `(ref ∪ input)`. Designed for ViPTree v2 web backend.
+- **Bundled Rust binary `viptreegen-summary-pre`** — fuses the legacy 01-3 (cat+rename),
+  02-1 (filter), 02-2 (BED conversion), and 02-3 (interval merge) into one parallel
+  single-process step. EVG 02-3 wall clock: 114 s → 2.4 s (48× speedup). Built with
+  `cargo build --release --manifest-path rust/Cargo.toml` (Bioconda installs it
+  automatically).
+- **`--mmseqs-split-memory-limit SIZE`** (default `12G`). Caps peak RAM used by
+  the mmseqs target index. Pass `0` to let mmseqs use as much RAM as needed.
+- **Bundled BLOSUM45 substitution matrix** under `data/blosum45.out` (mmseqs2
+  format, freely redistributable), passed to mmseqs via `--sub-mat`. Without this,
+  mmseqs-tblastx would default to BLOSUM62 and disagree more with `--mode tblastx`.
+- **Ruby CLI entry point** (`./ViPTreeGen`) replaces the previous bash wrapper.
+  OptionParser-based argument handling, mode-aware dependency check, structured
+  logging via `Open3`.
+- **Per-step logs ingested into `run.duckdb`'s `logs` table** (with `source` like
+  `tblastx`, `mmseqs:search.node`, `makeblastdb`). Per-node `tblastx.out` files are
+  deleted after the Rust binary consumes them — `run.duckdb` is now the single
+  authoritative output artifact.
+- **Bioconda package**: `conda install -c bioconda viptreegen`.
+- **CI smoke tests** (`.github/workflows/test.yml` + `test.sh`) covering all three
+  modes, normal/2D/with-reference flows, validation rejects, golden matrix
+  comparison for `--mode tblastx`, and tree generation.
+
+### Changed
+- **FASTA label normalization** (replace non-`[A-Za-z0-9.\-_]` with `_`, strip
+  leading/trailing dots, collapse consecutive separators) is now factored into
+  a single `ParseFastaEntries` lambda used by 01-1 / 01-1.2D / 01-1.ref.prep.
+- **Rust binary rounding** is half-to-even (banker's rounding, IEEE 754), not
+  half-away-from-zero. Affects `%.1f`-formatted `pct_que_len_in_hit` and friends
+  at exact-half boundaries (rare in practice).
+
+### Removed
+- `--mode mmseqs-blastn` was evaluated and dropped. mmseqs nucleotide search
+  (`--search-type 3`) at our typical input size was ~9× slower than `blastn`,
+  used ~80× more RAM, and was ~16% less sensitive (Pearson r ≈ 0.70 vs blastn).
+  See `doc/mmseqs-blastn.md` for the full evaluation.
+
+---
+
+## [1.1.4] — 2026-05-16
+
+### Added
+- Bioconda packaging: `meta.yaml` and `environment.yaml` shipped with the repo, with
+  `run_exports` set for Bioconda lint compliance.
+
+### Fixed
+- Ruby 4.x compatibility (`Open3` / `OptionParser` interactions tightened up).
+
+---
+
+## [1.1.3]
+
+### Fixed
+- Misc. small fixes carried from pre-Bioconda development; no schema changes.
+
+---
+
+## [1.1.2] and earlier
+
+See `git log` for the granular history of the v1.x line — `run.duckdb` aggregation
+landed in v1.2.0 (unreleased; folded into v2.0), prior to which all intermediate
+state lived as files under the output directory.

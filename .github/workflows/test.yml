@@ -1,0 +1,80 @@
+name: smoke-tests
+
+# Triggers:
+#   - push to any branch -> run full smoke test
+#   - PR (open/update)   -> run full smoke test
+#   - manual dispatch    -> run on-demand via the Actions tab
+#
+# CI delegates the actual test commands to ./test.sh so that running
+#   bash test.sh
+# locally is exactly equivalent to a CI run. Keep new tests in test.sh, not here.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}   # login shell needed for micromamba env activation
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up micromamba (BLAST+ / MMseqs2 / DuckDB / Ruby / R / Rust)
+        uses: mamba-org/setup-micromamba@v1
+        with:
+          environment-name: viptreegen-ci
+          init-shell: bash
+          create-args: >-
+            -c bioconda -c conda-forge
+            blast
+            mmseqs2
+            duckdb
+            ruby
+            r-base
+            r-ape
+            r-phangorn
+            rust
+            gnu-parallel
+
+      - name: Build bundled Rust binary
+        run: cargo build --release --manifest-path rust/Cargo.toml
+
+      - name: Run smoke tests (bash test.sh)
+        env:
+          NCPUS: "2"
+        run: bash test.sh
+
+  lint:
+    # Lint job runs in parallel with smoke; cheap (no external bio tools needed).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Ruby syntax check (ruby -c on CLI + rake)
+        # `standard`/`rubocop` are stricter but require buy-in to a style guide;
+        # `ruby -c` catches genuine parse errors without forcing a style war.
+        run: |
+          ruby -c ViPTreeGen
+          ruby -c ViPTreeGen.rake
+          for f in script/*.rb; do ruby -c "$f"; done
+
+      - name: cargo check (catches real compile errors)
+        run: cargo check --release --manifest-path rust/Cargo.toml
+
+      - name: cargo clippy (informational; warnings printed but do not fail CI)
+        # `cargo fmt --check` and `clippy -D warnings` are deliberately omitted:
+        # the existing code uses aligned `match` arms and a few intentional patterns
+        # (e.g. type_complexity on a 3-tuple); imposing rustfmt style would be churn.
+        # Clippy still prints suggestions in CI logs as a hint for future cleanup.
+        run: cargo clippy --release --manifest-path rust/Cargo.toml
