@@ -213,14 +213,25 @@ end
 ## Build a BLAST+ search command for one (query, db, out, log) tuple. Used by 01-1 /
 ## 01-1.2D / 01-1.ref.prep to populate per-node batch files. mmseqs-* modes do their
 ## search in 01-2 (single global call) and never enter this helper.
+##
+## Robustness for --resume:
+## The command writes to "<out>.tmp" first and `mv`s to "<out>" only on a zero exit
+## status from tblastx/blastn. If the search is killed mid-write (qsub time limit,
+## OOM, manual signal), the `.tmp` file remains but "<out>" never appears -- so on
+## --resume the batch-level filter in 01-2 sees that "<out>" is absent and re-runs
+## that batch. Without this guard a SIGKILL'd run leaves a truncated `<out>` that
+## the Rust binary would silently parse, dropping a handful of HSPs from the
+## summary_pre table.
 SearchCmd = lambda do |query:, db:, out:, log:|
 	case Mode
 	when "tblastx"
 		"tblastx -dbsize #{DBsize} -matrix #{Matrix} -max_target_seqs #{Max_target_seqs} " \
-		"-num_threads #{Nthreads} -evalue #{Evalue} -outfmt 6 -db #{db} -query #{query} -out #{out} 2>#{log}"
+		"-num_threads #{Nthreads} -evalue #{Evalue} -outfmt 6 -db #{db} -query #{query} -out #{out}.tmp 2>#{log} " \
+		"&& mv #{out}.tmp #{out}"
 	when "blastn"
 		"blastn -dbsize #{DBsize} -max_target_seqs #{Max_target_seqs} " \
-		"-num_threads #{Nthreads} -evalue #{Evalue} -outfmt 6 -db #{db} -query #{query} -out #{out} 2>#{log}"
+		"-num_threads #{Nthreads} -evalue #{Evalue} -outfmt 6 -db #{db} -query #{query} -out #{out}.tmp 2>#{log} " \
+		"&& mv #{out}.tmp #{out}"
 	else
 		raise "SearchCmd: unsupported Mode '#{Mode}' for per-batch search (mmseqs-* modes use one global call in 01-2)"
 	end
@@ -424,10 +435,11 @@ task :default do
 		## search step (01-2) and the mmseqs tmpdir.
 		sh "rm -rf #{Odir}/mmseqs_tmp 2>/dev/null || true"
 		unless StepDone.call("01-2.tblastx")
-			## tblastx mode: partial GNU parallel batches may have written some tblastx.out
-			## files. Re-run 01-2 produces them fresh; pre-delete to avoid mixing partial
-			## results from the killed run with new output.
-			sh "find #{Odir}/node #{Odir}/input -type f -name 'tblastx.out' -delete 2>/dev/null || true"
+			## tblastx/blastn mode: SearchCmd writes "<out>.tmp" first and `mv`s to "<out>"
+			## only on success, so "<out>" implies a clean tblastx/blastn exit. Sweep any
+			## orphan ".tmp" files (left by a killed run) and KEEP the cleanly-completed
+			## "<out>" files -- the batch-level filter in 01-2 will skip those.
+			sh "find #{Odir}/node #{Odir}/input -type f -name 'tblastx.out.tmp' -delete 2>/dev/null || true"
 		end
 	end
 
@@ -831,6 +843,30 @@ task "01-2.tblastx", ["step"] do |t, args|
 	case Mode
 	when "tblastx", "blastn"
 		jdir = "#{Odir}/batch/01-1" # output from 01-1
+		## --resume support: SearchCmd writes "<out>.tmp" then `mv`s to "<out>", so a
+		## present "<out>" file means a previous run finished that batch line cleanly.
+		## Filter such lines out of the batch files so RunBatch (GNU parallel / qsub)
+		## only redoes what was killed or never started.
+		if Resume
+			skipped = 0; kept = 0
+			Dir.glob("#{jdir}/*").sort.each do |bf|
+				lines = File.readlines(bf)
+				filtered = lines.reject do |line|
+					out_file = line[/-out\s+(\S+?)\.tmp\b/, 1]   # SearchCmd writes "<out>.tmp"
+					if out_file && File.exist?(out_file)
+						skipped += 1; true
+					else
+						kept += 1; false
+					end
+				end
+				if filtered.empty?
+					File.delete(bf)
+				elsif filtered.size != lines.size
+					File.write(bf, filtered.join)
+				end
+			end
+			puts "\e[1;36m### resume: #{skipped} tblastx/blastn batch entries already done, #{kept} to (re-)run\e[0m"
+		end
 		RunBatch.call(jdir, Qname, Nthreads, Mem, Wtime, Ncpus)
 
 	when "mmseqs-tblastx"

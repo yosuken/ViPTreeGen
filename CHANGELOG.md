@@ -42,6 +42,12 @@ default search engine, schema, and on-disk output structure all change.
   rejected on any mismatch. Useful when a long `mmseqs search` or `tblastx`
   step is killed by OOM / qsub time limit -- restart with the same arguments
   plus `--resume` and the pipeline continues from where it stopped.
+  In `--mode tblastx` / `--mode blastn`, `--resume` is also batch-level: 01-2
+  filters out batch lines whose `-out FILE` already exists, so partially-
+  completed per-(query, split) batches survive across restarts. To make this
+  safe, SearchCmd writes the result to `<FILE>.tmp` and `mv`s to `<FILE>`
+  only on a zero exit -- a tblastx/blastn killed mid-write leaves a `.tmp`
+  but no `<FILE>`, so the batch is re-run cleanly on resume.
 - **`--ref-duckdb PATH`** — with-reference mode. Reuse a previous v2.0 `run.duckdb`
   as the reference set: ref sequences, `self_scores`, and ref-vs-ref `summary_tsv`
   are ATTACHed and copied; only input-vs-input and input-vs-ref are recomputed. The

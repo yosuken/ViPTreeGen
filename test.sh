@@ -122,6 +122,27 @@ if ./ViPTreeGen --resume --notree --mode mmseqs-tblastx --ncpus "$NCPUS" \
 	fail "--resume should reject differing --mode (prev=tblastx, current=mmseqs-tblastx)"
 fi
 
+step "--resume: tblastx batch-level filter (SearchCmd tempfile pattern)"
+# Verify SearchCmd writes the .tmp + mv pattern (not direct -out file).
+batch_line=$(head -1 "$RESUME_DIR/batch/01-1"/*)
+echo "$batch_line" | grep -q -- '-out .*\.tmp .*&& mv .*\.tmp' \
+	|| fail "SearchCmd should emit '-out FILE.tmp ... && mv FILE.tmp FILE'; got: $batch_line"
+# Simulate a real "01-2 killed mid-flight" state: 01-1 completed (its step_done is
+# preserved), 01-2 onwards were killed (step_done cleared). Resume should re-enter
+# 01-2, run the batch filter (no pre-existing tblastx.out -> 0 already done, N to
+# run), and produce a matrix that still matches the tblastx golden bit-exact.
+BATCH_DIR="$TEST_TMP/batch_resume"
+rm -rf "$BATCH_DIR"
+./ViPTreeGen --notree --ncpus "$NCPUS" --mode tblastx testdata/ssDNA.prok.8.fasta "$BATCH_DIR"
+duckdb "$BATCH_DIR/run.duckdb" \
+	"DELETE FROM run_metadata WHERE key LIKE 'step_done:01-2.%' \
+	  OR key LIKE 'step_done:02-%' OR key LIKE 'step_done:03-%'"
+log=$(./ViPTreeGen --resume --notree --ncpus "$NCPUS" --mode tblastx testdata/ssDNA.prok.8.fasta "$BATCH_DIR" 2>&1)
+echo "$log" | grep -q "batch entries already done" \
+	|| fail "expected resume to print '… batch entries already done, … to (re-)run' (log: $(echo \"$log\" | tail -5))"
+diff -u testdata/expected/ssDNA.prok.8.tblastx.sim.matrix "$BATCH_DIR/result/all.sim.matrix" \
+	|| fail "batch-resume matrix differs from golden"
+
 step "--resume: rejects when output dir does not exist"
 if ./ViPTreeGen --resume --notree --mode tblastx --ncpus "$NCPUS" \
                 testdata/ssDNA.prok.8.fasta "$TEST_TMP/nonexistent_resume_dir" 2>/dev/null; then
