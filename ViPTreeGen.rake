@@ -108,6 +108,57 @@ FinalLogCleanup = lambda do
 	end
 end
 
+## Parse a FASTA string, normalize sequence labels, and validate per-entry
+## constraints. Returns an Array of [normalized_label, sequence] pairs in
+## FASTA order. Raises on format errors / too-short sequences / within-file
+## duplicate labels. Prints "### [!] X is changed to Y" for each renamed entry.
+##
+## Label normalization rules (applied in order):
+##   - take the first whitespace-delimited token of the header line
+##   - replace any char outside [a-zA-Z0-9.\-_] with `_`
+##   - strip leading / trailing `.` `-` `_`
+##   - collapse consecutive `.` `-` `_` to a single char
+##
+## Reasons: tblastx/tree generation (ape/phangorn bionj) is sensitive to
+## leading/trailing dots and runs of separators.
+ParseFastaEntries = lambda do |fasta_str, fasname:, min_seqs: nil|
+	raise("\e[1;31mError:\e[0m #{fasname} might not be in FASTA format.") if fasta_str[0] != ">"
+	ents = fasta_str.split(/^>/)[1..-1] || []
+	raise("\e[1;31mError:\e[0m #{fasname} should include at least #{min_seqs} seqeuences.") if min_seqs && ents.size < min_seqs
+
+	not_allowed_pattern     = /[^a-zA-Z0-9\-\.\_]/
+	not_allowed_pattern_pre = /^[\.\-\_]+/
+	not_allowed_pattern_suf = /[\.\-\_]+$/
+	not_allowed_pattern_dot = /(\.)[\.]+/
+	not_allowed_pattern_hyp = /(\-)[\-]+/
+	not_allowed_pattern_und = /(\_)[\_]+/
+
+	seen   = {}
+	result = []
+	ents.each do |ent|
+		lab, *seq = ent.split("\n")
+		seq  = seq.join.gsub(/\s/, "")
+		len  = seq.size
+
+		_lab = lab.split(/\s+/)[0]
+		lab  = _lab.gsub(not_allowed_pattern, "_")
+		lab  = lab.gsub(not_allowed_pattern_pre, "")
+		          .gsub(not_allowed_pattern_suf, "")
+		          .gsub(not_allowed_pattern_dot, '\1')
+		          .gsub(not_allowed_pattern_hyp, '\1')
+		          .gsub(not_allowed_pattern_und, '\1')
+
+		puts "### [!] #{_lab} is changed to #{lab}" if _lab != lab
+
+		raise("\e[1;31mError:\e[0m '#{lab}' is too short (length < 100 nt) included in #{fasname}.") if len < 100
+		raise("\e[1;31mError:\e[0m sequence name is not uniq. '#{lab}' is found multiple times in #{fasname}.") if seen[lab]
+
+		seen[lab] = true
+		result << [lab, seq]
+	end
+	result
+end
+
 IngestSequences = lambda do |labs_in_order, lab2seq, kind:|
 	## bulk-insert into sequences table via tmp TSV
 	require "fileutils"
@@ -282,47 +333,14 @@ task "01-1.2D.prep_for_tblastx", ["step"] do |t, args|
 	fasta_str_q = IO.read(Fin_q)
 	fasta_str_i = IO.read(Fin)
 
-	# check if input is fasta format
-	[fasta_str_q, fasta_str_i].zip(["query FASTA file", "input FASTA file"]){ |fasta_str, fasname|
-		raise("\e[1;31mError:\e[0m #{fasname} might not be in FASTA format.") if fasta_str[0] != ">"
-		raise("\e[1;31mError:\e[0m #{fasname} should include at least 3 seqeuences.") if fasname == "input FASTA file" and fasta_str.split(/^>/)[1..-1].size < 3
-	}
+	entries_q = ParseFastaEntries.call(fasta_str_q, fasname: "query FASTA file")
+	entries_i = ParseFastaEntries.call(fasta_str_i, fasname: "input FASTA file", min_seqs: 3)
 
 	lab2seq_q = {}
 	lab2seq_i = {}
 	uniqlab   = {}
-	[fasta_str_q, fasta_str_i].zip([lab2seq_q, lab2seq_i], ["query FASTA file", "input FASTA file"]){ |fasta_str, lab2seq, fasname|
-		fasta_str.split(/^>/)[1..-1].each{ |ent|
-			lab, *seq = ent.split("\n")
-			seq = seq.join.gsub(/\s/, "")
-			len = seq.size
-
-			# take only label from comment line
-			_lab = lab.split(/\s+/)[0]
-
-			# label validation and modification
-			not_allowed_pattern = /[^a-zA-Z0-9\-\.\_]/
-			lab = _lab.gsub(not_allowed_pattern, "_") # modify signs to underscores
-
-			### change hyphen and dots in start/end to underscore (begins with ".", "-" --> linux system problem, end with "." --> tblastx subject name problem ["abc." -> "abc"]), end with "___" --> ape/phangorn bionj generation problem ["abc___" -> "abc_"]
-			not_allowed_pattern_pre = /^[\.\-\_]+/
-			not_allowed_pattern_suf = /[\.\-\_]+$/
-			not_allowed_pattern_dot = /(\.)[\.]+/
-			not_allowed_pattern_hyp = /(\-)[\-]+/
-			not_allowed_pattern_und = /(\_)[\_]+/
-			## remove "." to "_" if the position is in the start / end  (issue in tblastx and tree generation step)
-			## remove sequential "." or "-" or "_" (issue in bionj generation)
-			lab = lab.gsub(not_allowed_pattern_pre, "").gsub(not_allowed_pattern_suf, "").gsub(not_allowed_pattern_dot, '\1').gsub(not_allowed_pattern_hyp, '\1').gsub(not_allowed_pattern_und, '\1')
-
-			### label modification log
-			puts "### [!] #{_lab} is changed to #{lab}" if _lab != lab
-
-			### detect sequence format error
-			raise("\e[1;31mError:\e[0m '#{lab}' is too short (length < 100 nt) included.") if len < 100
-			# raise("\e[1;31mError:\e[0m not acceptable character is detected in sequence of '#{lab}' (allowed characters are 'ACGTRYKMSWBDHVN').") if seq =~ /[^ACGTRYKMSWBDHVN]/i
-			raise("\e[1;31mError:\e[0m sequence name is not uniq. '#{lab}' is found multiple times in #{fasname}.") if lab2seq[lab]
-
-			# store sequence name
+	[[entries_q, lab2seq_q], [entries_i, lab2seq_i]].each{ |entries, lab2seq|
+		entries.each{ |lab, seq|
 			lab2seq[lab] = seq
 			uniqlab[lab] = 1
 		}
@@ -447,46 +465,13 @@ task "01-1.prep_for_tblastx", ["step"] do |t, args|
 	open(Flen, "w"){ |flen|
 		open(fa, "w"){ |fall|
 			fasta_str = IO.read(Fin)
+			entries   = ParseFastaEntries.call(fasta_str, fasname: "input FASTA file", min_seqs: 3)
 
-			# check if input is fasta format
-			raise("\e[1;31mError:\e[0m input FASTA file might not be in FASTA format.") if fasta_str[0] != ">"
-			raise("\e[1;31mError:\e[0m input FASTA file should include at least 3 seqeuences.") if fasta_str.split(/^>/)[1..-1].size < 3
-
-			uniqlab = {}
-			fasta_str.split(/^>/)[1..-1].each{ |ent|
-				lab, *seq = ent.split("\n")
-				seq  = seq.join.gsub(/\s/, "")
-				len  = seq.size
-
-				# take only label from comment line
-				_lab = lab.split(/\s+/)[0]
-
-				# label validation and modification
-				not_allowed_pattern = /[^a-zA-Z0-9\-\.\_]/
-				lab = _lab.gsub(not_allowed_pattern, "_") # modify signs to underscores
-
-				### change hyphen and dots in start/end to underscore (begins with ".", "-" --> linux system problem, end with "." --> tblastx subject name problem ["abc." -> "abc"]), end with "___" --> ape/phangorn bionj generation problem ["abc___" -> "abc_"]
-				not_allowed_pattern_pre = /^[\.\-\_]+/
-				not_allowed_pattern_suf = /[\.\-\_]+$/
-				not_allowed_pattern_dot = /(\.)[\.]+/
-				not_allowed_pattern_hyp = /(\-)[\-]+/
-				not_allowed_pattern_und = /(\_)[\_]+/
-				## remove "." to "_" if the position is in the start / end  (issue in tblastx and tree generation step)
-				## remove sequential "." or "-" or "_" (issue in bionj generation)
-				lab = lab.gsub(not_allowed_pattern_pre, "").gsub(not_allowed_pattern_suf, "").gsub(not_allowed_pattern_dot, '\1').gsub(not_allowed_pattern_hyp, '\1').gsub(not_allowed_pattern_und, '\1')
-
-				### label modification log
-				puts "### [!] #{_lab} is changed to #{lab}" if _lab != lab
-
-				### detect sequence format error
-				raise("\e[1;31mError:\e[0m '#{lab}' is too short (length < 100 nt) included.") if len < 100
-				raise("\e[1;31mError:\e[0m sequence name is not uniq. '#{lab}' is found twice in #{fasname}.") if lab2seq[lab]
-				### The rule below might be too strict --> do not use
-				# raise("\e[1;31mError:\e[0m not acceptable character is detected in sequence of '#{lab}' (allowed characters are 'ACGTRYKMSWBDHVN').") if seq =~ /[^ACGTRYKMSWBDHVN]/i
+			entries.each{ |lab, seq|
+				len = seq.size
 
 				# store sequence name
 				lab2seq[lab] = seq
-				uniqlab[lab] = 1
 
 				# make cat output
 				flen.puts [lab, len]*"\t"
