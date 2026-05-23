@@ -46,9 +46,12 @@ InitDuckDB = lambda do |mode:|
 	## (re)create schema and seed run_metadata. Called from 01-1 (both normal and 2D).
 	DuckDBUtil.exec_sql(DuckDBUtil::SCHEMA_SQL)
 	rows = [
-		["version",     "2.0.0-dev"],
-		["mode",        mode],         ## "normal" or "2D"
-		["search_mode", Mode],         ## "tblastx" or "mmseqs"
+		["version",        "2.0.0-dev"],
+		["schema_version", "2.0"],         ## bumped when `sequences.seq` was added; required by --ref-duckdb
+		["mode",           mode],          ## "normal", "2D", or "ref"
+		["search_mode",    Mode],          ## "tblastx" or "mmseqs-tblastx"
+		["ref_mode",       RefMode.to_s],
+		["ref_duckdb_path", RefMode ? RefDuckDB : ""],
 		["cutlen",      Cutlen.to_s],
 		["dbsize",      DBsize.to_s],
 		["matrix",      Matrix.to_s],
@@ -84,7 +87,7 @@ FinalLogCleanup = lambda do
 
 	## mmseqs per-stage logs ingest into `logs` (source = "mmseqs:<stage>"), then delete.
 	## Files come from 01-1 (createdb logs) and 01-2 (search/convertalis logs).
-	if Mode == "mmseqs"
+	if Mode == "mmseqs-tblastx"
 		mmseqs_logs = Dir["#{Odir}/cat/all/mmseqs_*.log"] +
 		              Dir["#{Odir}/cat/all/*.fasta.createdb.log"]
 		unless mmseqs_logs.empty?
@@ -159,8 +162,11 @@ ParseFastaEntries = lambda do |fasta_str, fasname:, min_seqs: nil|
 	result
 end
 
-IngestSequences = lambda do |labs_in_order, lab2seq, kind:|
-	## bulk-insert into sequences table via tmp TSV
+IngestSequences = lambda do |labs_in_order, lab2seq, kind:, ord_offset: 0|
+	## bulk-insert into sequences table via tmp TSV. `seq` is the nucleotide
+	## string itself (no whitespace — ParseFastaEntries stripped it), so a 4-col
+	## TSV row stays unambiguous and tab-safe. `ord_offset` lets ref-mode append
+	## input sequences after pre-imported ref entries without ord collisions.
 	require "fileutils"
 	tdir = "#{Odir}/tmp"; FileUtils.mkdir_p(tdir)
 	tsv  = "#{tdir}/sequences.#{kind}.tsv"
@@ -168,10 +174,10 @@ IngestSequences = lambda do |labs_in_order, lab2seq, kind:|
 		labs_in_order.each_with_index { |lab, idx|
 			seq = lab2seq[lab]
 			next unless seq
-			f.puts [lab, kind, seq.size, idx].join("\t")
+			f.puts [lab, kind, seq.size, idx + ord_offset, seq].join("\t")
 		}
 	}
-	DuckDBUtil.copy_in("sequences", tsv, columns: %w[seq_id kind length ord])
+	DuckDBUtil.copy_in("sequences", tsv, columns: %w[seq_id kind length ord seq])
 	File.delete(tsv)
 end
 
@@ -186,7 +192,7 @@ BuildDBCmd = lambda do |mode:, fasta:, db_path:, log:, create_index: false|
 	case mode
 	when "tblastx"
 		"makeblastdb -dbtype nucl -in #{fasta} -out #{db_path} -title #{File.basename(fasta)} 2>#{log}"
-	when "mmseqs"
+	when "mmseqs-tblastx"
 		idx_tmp = "#{File.dirname(db_path)}/mmseqs_idx_tmp.#{File.basename(db_path)}"
 		cmds = ["mmseqs createdb #{fasta} #{db_path} >#{log} 2>&1"]
 		if create_index
@@ -259,14 +265,24 @@ task :default do
 	tasks = %w|01-2.tblastx 02-3.make_summary_pre 02-4.make_self_tblastx|
 
 	### add specific tasks
-	if ENV["twoD"] == "" ## not 2D mode
+	if ENV["twoD"] != ""
+		## 2D mode (mutex with ref mode; CLI already enforced)
+		tasks = %w|01-1.2D.prep_for_tblastx| + tasks + %w|02-5.2D.make_summary_tsv 03-1.2D.make_matrix|
+	elsif ENV["ref_duckdb"].to_s != ""
+		## with-reference mode: 01-1.ref.prep replaces 01-1.prep_for_tblastx
+		## (final tree/matrix tasks are identical to normal mode — the matrix is over input ∪ ref)
+		if ENV["notree"] == ""
+			tasks = %w|01-1.ref.prep| + tasks + %w|02-5.make_summary_tsv 03-1.make_matrix 03-2.matrix_to_nj|
+		else
+			tasks = %w|01-1.ref.prep| + tasks + %w|02-5.make_summary_tsv 03-1.make_matrix|
+		end
+	else
+		## normal mode
 		if ENV["notree"] == "" ## make tree
 			tasks = %w|01-1.prep_for_tblastx| + tasks + %w|02-5.make_summary_tsv 03-1.make_matrix 03-2.matrix_to_nj|
 		else ## only generate matrix
 			tasks = %w|01-1.prep_for_tblastx| + tasks + %w|02-5.make_summary_tsv 03-1.make_matrix|
 		end
-	else ## 2D mode
-		tasks = %w|01-1.2D.prep_for_tblastx| + tasks + %w|02-5.2D.make_summary_tsv 03-1.2D.make_matrix| ## add 2D tasks
 	end
 
 	### constants
@@ -284,10 +300,13 @@ task :default do
 	DBsize   = ENV["dbsize"]      ## default: 200,000,000
 	Matrix   = ENV["matrix"]      ## default: BLOSUM45
 	Evalue   = ENV["evalue"]      ## default: 1e-2
-	Mode     = ENV["mode"] || "tblastx"  ## search engine: tblastx (default) or mmseqs (--search-type 4)
-	raise("`--mode #{Mode}': must be 'tblastx' or 'mmseqs'") unless %w|tblastx mmseqs|.include?(Mode)
+	Mode     = ENV["mode"] || "mmseqs-tblastx"   ## search engine: mmseqs --search-type 4 (default) or tblastx
+	raise("`--mode #{Mode}': must be 'tblastx' or 'mmseqs-tblastx'") unless %w|tblastx mmseqs-tblastx|.include?(Mode)
+	## with-reference mode: previous-run `run.duckdb` providing ref sequences, self_scores, summary_tsv.
+	RefDuckDB = ENV["ref_duckdb"].to_s
+	RefMode   = !RefDuckDB.empty?
 	## In mmseqs mode the search DB uses a different prefix; in tblastx mode it equals the FASTA path.
-	DB       = (Mode == "mmseqs") ? "#{Fa}.mmdb" : Fa
+	DB       = (Mode == "mmseqs-tblastx") ? "#{Fa}.mmdb" : Fa
 	## mmseqs target index memory cap (passed to mmseqs `--split-memory-limit`).
 	## Default 12G; user can override via --mmseqs-split-memory-limit.
 	MmseqsSplitMem = ENV["mmseqs_split_memory_limit"].to_s.empty? ? "12G" : ENV["mmseqs_split_memory_limit"]
@@ -302,7 +321,7 @@ task :default do
 	TreeMethod = ENV["method"]||"bionj"
 
 	### check version
-	engine_cmds = (Mode == "mmseqs") ? %w|mmseqs| : %w|tblastx makeblastdb|
+	engine_cmds = (Mode == "mmseqs-tblastx") ? %w|mmseqs| : %w|tblastx makeblastdb|
 	commands    = engine_cmds + %w|duckdb viptreegen-summary-pre R ape phangorn ruby|
 	commands += %w|parallel| if Ncpus != ""
 	CheckVersion.call(commands)
@@ -378,7 +397,7 @@ task "01-1.2D.prep_for_tblastx", ["step"] do |t, args|
 			n1dir = "#{Odir}/#{type}/#{lab}/blast"; mkdir_p n1dir
 
 			fque   = "#{n0dir}/#{lab}.fasta"
-			self_db = (Mode == "mmseqs") ? "#{fque}.mmdb" : fque
+			self_db = (Mode == "mmseqs-tblastx") ? "#{fque}.mmdb" : fque
 			open(fque, "w"){ |_fque|
 				_fque.puts [">"+lab, seq.scan(/.{1,70}/)]
 			}
@@ -426,27 +445,179 @@ task "01-1.2D.prep_for_tblastx", ["step"] do |t, args|
 	WriteBatch.call(outs, jdir, t)
 
 	## build target DB for all.fasta (createindex for mmseqs to amortize per-query lookups)
-	sh BuildDBCmd.call(mode: Mode, fasta: Fa, db_path: DB, log: log, create_index: (Mode == "mmseqs"))
+	sh BuildDBCmd.call(mode: Mode, fasta: Fa, db_path: DB, log: log, create_index: (Mode == "mmseqs-tblastx"))
 
 	## mmseqs 2D mode: build query.fasta / input.fasta DBs for the two separate searches.
 	## (tblastx mode uses per-input self-DBs created inline above; mmseqs path replaces
 	## that pattern with one input-vs-input bulk search.)
-	if Mode == "mmseqs"
+	if Mode == "mmseqs-tblastx"
 		query_fa = "#{Odir}/cat/all/query.fasta"
 		input_fa = "#{Odir}/cat/all/input.fasta"
 		open(query_fa, "w") { |f| lab2seq_q.each { |l, s| f.puts ">"+l, s.scan(/.{1,70}/) } }
 		open(input_fa, "w") { |f| lab2seq_i.each { |l, s| f.puts ">"+l, s.scan(/.{1,70}/) } }
-		sh BuildDBCmd.call(mode: "mmseqs", fasta: query_fa, db_path: "#{Fa}.query.mmdb",
+		sh BuildDBCmd.call(mode: "mmseqs-tblastx", fasta: query_fa, db_path: "#{Fa}.query.mmdb",
 		                   log: "#{query_fa}.createdb.log", create_index: false)
-		sh BuildDBCmd.call(mode: "mmseqs", fasta: input_fa, db_path: "#{Fa}.input.mmdb",
+		sh BuildDBCmd.call(mode: "mmseqs-tblastx", fasta: input_fa, db_path: "#{Fa}.input.mmdb",
 		                   log: "#{input_fa}.createdb.log", create_index: true)
 	end
 
 	## populate DuckDB: sequences (query = kind 'node', input = kind 'input') + makeblastdb.log
 	IngestSequences.call(lab2seq_q.keys, lab2seq_q, kind: "node")
 	IngestSequences.call(lab2seq_i.keys, lab2seq_i, kind: "input")
-	DuckDBUtil.ingest_log(log, source: (Mode == "mmseqs" ? "mmseqs:all.createdb" : "makeblastdb"))
+	DuckDBUtil.ingest_log(log, source: (Mode == "mmseqs-tblastx" ? "mmseqs:all.createdb" : "makeblastdb"))
 end
+desc "01-1.ref.prep"
+task "01-1.ref.prep", ["step"] do |t, args|
+	## with-reference-mode prep:
+	##   - read ref-duckdb's run_metadata to verify schema_version >= 2.0 and mode == 'normal'
+	##   - ParseFastaEntries on input.fasta, detect ID collisions with ref
+	##   - InitDuckDB (mode='ref') -> new run.duckdb
+	##   - ATTACH ref-duckdb (READ_ONLY) and copy:
+	##       sequences  (ref `kind=node` rows -- this brings in `seq` so all.fasta is rebuildable)
+	##       self_scores
+	##       summary_tsv  (already bidirectional from the previous run)
+	##   - append input sequences (ord = max_ref_ord + 1..N) via IngestSequences
+	##   - re-emit cat/all/all.fasta from ref-duckdb + input_lab2seq (ref first, input after)
+	##   - also write cat/all/input.fasta (used by mmseqs branch of 01-2 to build an input subset DB)
+	##   - generate per-(input-node, split) tblastx batches when Mode == 'tblastx'
+	##   - build the engine DB (makeblastdb / mmseqs createdb) on all.fasta
+	PrintStatus.call(args.step, NumStep, "START", t)
+	jdir     = "#{Odir}/batch/#{t.name.split('.')[0]}"; mkdir_p jdir
+	odir     = "#{Odir}/cat/all"; mkdir_p odir
+	log      = "#{odir}/all.fasta.makeblastdb.log"
+	fa       = "#{odir}/all.fasta"
+	input_fa = "#{odir}/input.fasta"
+	outs     = []
+	puts ""
+
+	## --- 1. validate ref-duckdb compatibility ------------------------------
+	ref_meta = {}
+	DuckDBUtil.query_each("SELECT key, value FROM run_metadata", db: RefDuckDB) do |line|
+		k, v = line.split("\t", 2)
+		ref_meta[k] = v
+	end
+	raise "ref-duckdb has no run_metadata (not a ViPTreeGen run.duckdb?): #{RefDuckDB}" if ref_meta.empty?
+	sv = ref_meta["schema_version"]
+	if sv.nil? || Gem::Version.new(sv) < Gem::Version.new("2.0")
+		raise "ref-duckdb schema_version=#{sv.inspect} is too old; need >= 2.0. " \
+		      "Re-generate the reference with ViPTreeGen v2.0+."
+	end
+	unless ref_meta["mode"] == "normal"
+		raise "ref-duckdb was generated in mode=#{ref_meta['mode'].inspect}; only 'normal' refs are supported."
+	end
+	puts "### ref-duckdb: schema_version=#{sv}, search_mode=#{ref_meta['search_mode']}, " \
+	     "matrix=#{ref_meta['matrix']}, evalue=#{ref_meta['evalue']}"
+	if ref_meta["search_mode"] != Mode
+		puts "### [!] ref-duckdb was built with --mode #{ref_meta['search_mode']} but this run uses --mode #{Mode}. " \
+		     "Cross-engine SG values differ slightly; topology should still be preserved."
+	end
+
+	## --- 2. parse input fasta ----------------------------------------------
+	input_fasta_str = IO.read(Fin)
+	input_entries   = ParseFastaEntries.call(input_fasta_str, fasname: "input FASTA file", min_seqs: 1)
+	input_labs      = input_entries.map(&:first)
+	input_lab2seq   = input_entries.to_h
+
+	## --- 3. read ref ids + max ord from ref-duckdb -------------------------
+	ref_ids = {}
+	DuckDBUtil.query_each("SELECT seq_id FROM sequences WHERE kind = 'node'", db: RefDuckDB) do |line|
+		ref_ids[line.strip] = true
+	end
+	max_ref_ord = -1
+	DuckDBUtil.query_each("SELECT COALESCE(MAX(ord), -1) FROM sequences WHERE kind = 'node'", db: RefDuckDB) do |line|
+		max_ref_ord = line.strip.to_i
+	end
+
+	## --- 4. detect input × ref ID collisions -------------------------------
+	collisions = input_labs.select { |lab| ref_ids[lab] }
+	unless collisions.empty?
+		raise "input fasta contains seq_id(s) already present in ref-duckdb: " \
+		      "#{collisions.first(5).join(', ')}#{collisions.size > 5 ? ' ...' : ''} (#{collisions.size} total).\n" \
+		      "Rename or remove the conflicting input sequences."
+	end
+
+	## --- 5. initialize new run.duckdb --------------------------------------
+	InitDuckDB.call(mode: "ref")
+
+	## --- 6. ATTACH ref-duckdb and copy ref data ----------------------------
+	attach_lit = DuckDBUtil.sql_str(RefDuckDB)
+	DuckDBUtil.exec_sql(<<~SQL)
+		ATTACH #{attach_lit} AS ref_db (READ_ONLY);
+		INSERT INTO sequences (seq_id, kind, length, ord, seq)
+		  SELECT seq_id, kind, length, ord, seq FROM ref_db.sequences WHERE kind = 'node';
+		INSERT INTO self_scores SELECT seq_id, self_score FROM ref_db.self_scores;
+		INSERT INTO summary_tsv SELECT * FROM ref_db.summary_tsv;
+		DETACH ref_db;
+		INSERT INTO run_metadata VALUES ('ref_count', '#{ref_ids.size}');
+	SQL
+
+	## --- 7. append input sequences (ord starts after ref) ------------------
+	IngestSequences.call(input_labs, input_lab2seq, kind: "node", ord_offset: max_ref_ord + 1)
+
+	## --- 8. emit cat/all/all.fasta, all.len, input.fasta -------------------
+	## (ref first, in their original ord; then input)
+	open(fa, "w") do |fall|
+		open(Flen, "w") do |flen|
+			open(input_fa, "w") do |finp|
+				DuckDBUtil.query_each(
+					"SELECT seq_id, length, seq FROM sequences WHERE kind = 'node' ORDER BY ord",
+					db: RefDuckDB,
+				) do |line|
+					seq_id, length, seq = line.split("\t", 3)
+					fall.puts [">"+seq_id, seq.scan(/.{1,70}/)]
+					flen.puts [seq_id, length].join("\t")
+				end
+				input_entries.each do |lab, seq|
+					fall.puts [">"+lab, seq.scan(/.{1,70}/)]
+					flen.puts [lab, seq.size].join("\t")
+					finp.puts [">"+lab, seq.scan(/.{1,70}/)]
+				end
+			end
+		end
+	end
+
+	## --- 9. per-(input-node, split) directories + batches -----------------
+	## ref nodes get no per-node dir; ref-vs-ref came from ref-duckdb.
+	input_entries.each do |lab, seq|
+		len   = seq.size
+		n0dir = "#{Odir}/node/#{lab}/seq";   mkdir_p n0dir
+		n1dir = "#{Odir}/node/#{lab}/blast"; mkdir_p n1dir
+
+		fque = "#{n0dir}/#{lab}.fasta"
+		open(fque, "w") { |f| f.puts [">"+lab, seq.scan(/.{1,70}/)] }
+
+		next unless Mode == "tblastx"   # mmseqs uses one global search; no per-node batches
+
+		if len > Cutlen
+			n0dir_s = "#{n0dir}/split"; mkdir_p n0dir_s
+			idx = 0
+			while seq && seq.size > 0
+				idx += 1
+				subseq, seq = seq[0, Cutlen], seq[Cutlen..-1]
+				fspt = "#{n0dir_s}/#{idx}.fasta"
+				open(fspt, "w") { |f| f.puts [">#{idx}", subseq.scan(/.{1,70}/)] }
+				n1dir_s = "#{n1dir}/split/#{idx}"; mkdir_p n1dir_s
+				_out = "#{n1dir_s}/tblastx.out"
+				_log = "#{n1dir_s}/tblastx.log"
+				outs << "tblastx -dbsize #{DBsize} -matrix #{Matrix} -max_target_seqs #{Max_target_seqs} -num_threads #{Nthreads} \
+				-evalue #{Evalue} -outfmt 6 -db #{DB} -query #{fspt} -out #{_out} 2>#{_log}".gsub(/\s+/, " ")
+			end
+		else
+			_out = "#{n1dir}/tblastx.out"
+			_log = "#{n1dir}/tblastx.log"
+			outs << "tblastx -dbsize #{DBsize} -matrix #{Matrix} -max_target_seqs #{Max_target_seqs} -num_threads #{Nthreads} \
+			-evalue #{Evalue} -outfmt 6 -db #{DB} -query #{fque} -out #{_out} 2>#{_log}".gsub(/\s+/, " ")
+		end
+	end
+
+	## --- 10. write batch file (input-only) ---------------------------------
+	WriteBatch.call(outs, jdir, t)
+
+	## --- 11. build engine DB on combined all.fasta -------------------------
+	sh BuildDBCmd.call(mode: Mode, fasta: Fa, db_path: DB, log: log, create_index: (Mode == "mmseqs-tblastx"))
+	DuckDBUtil.ingest_log(log, source: (Mode == "mmseqs-tblastx" ? "mmseqs:all.createdb" : "makeblastdb"))
+end
+
 desc "01-1.prep_for_tblastx"
 task "01-1.prep_for_tblastx", ["step"] do |t, args|
 	PrintStatus.call(args.step, NumStep, "START", t)
@@ -519,11 +690,11 @@ task "01-1.prep_for_tblastx", ["step"] do |t, args|
 	WriteBatch.call(outs, jdir, t)
 
 	## build target DB for all.fasta (createindex for mmseqs to amortize per-query lookups)
-	sh BuildDBCmd.call(mode: Mode, fasta: Fa, db_path: DB, log: log, create_index: (Mode == "mmseqs"))
+	sh BuildDBCmd.call(mode: Mode, fasta: Fa, db_path: DB, log: log, create_index: (Mode == "mmseqs-tblastx"))
 
 	## populate DuckDB: sequences + makeblastdb.log (file kept for backward compat in P0)
 	IngestSequences.call(lab2seq.keys, lab2seq, kind: "node")
-	DuckDBUtil.ingest_log(log, source: (Mode == "mmseqs" ? "mmseqs:all.createdb" : "makeblastdb"))
+	DuckDBUtil.ingest_log(log, source: (Mode == "mmseqs-tblastx" ? "mmseqs:all.createdb" : "makeblastdb"))
 end
 desc "01-2.tblastx"
 task "01-2.tblastx", ["step"] do |t, args|
@@ -540,23 +711,45 @@ task "01-2.tblastx", ["step"] do |t, args|
 		jdir = "#{Odir}/batch/01-1" # output from 01-1
 		RunBatch.call(jdir, Qname, Nthreads, Mem, Wtime, Ncpus)
 
-	when "mmseqs"
-		## mmseqs2's built-in matrices are blosum50/62/80 (default BLOSUM62 for translated mode).
-		## The Matrix constant (default BLOSUM45) applies to tblastx mode only -- mmseqs uses its default.
+	when "mmseqs-tblastx"
+		## mmseqs2's built-in scoring matrices are blosum50/62/80 (default BLOSUM62 for translated mode).
+		## ViPTreeGen targets *divergent* virus genomes, for which BLOSUM45 is more sensitive than BLOSUM62,
+		## so we ship blosum45.out (mmseqs2 format, from the upstream MMseqs2 repo, freely redistributable)
+		## under data/ and pass it via --sub-mat. This also keeps tblastx and mmseqs-tblastx on the same
+		## substitution matrix so their SG scores agree more tightly.
 		require "fileutils"
 		threads = Ncpus != "" ? Ncpus : "1"
 		tmpdir  = "#{Odir}/mmseqs_tmp"; FileUtils.mkdir_p(tmpdir)
 		fmt = '"query,target,pident,alnlen,mismatch,gapopen,qstart,qend,tstart,tend,evalue,bits"'
 		m8_split = "#{File.dirname(__FILE__)}/script/m8_split.rb"
+		sub_mat_path = "#{File.dirname(__FILE__)}/data/#{Matrix.downcase}.out"
+		unless File.file?(sub_mat_path)
+			raise "\e[1;31mError:\e[0m mmseqs substitution matrix not found: #{sub_mat_path}. " \
+			      "Bundled matrices live under data/ in the repo; ensure your --matrix option matches one of them."
+		end
 		## `--split-memory-limit X` caps the peak RAM mmseqs uses for the target index; if the
 		## index would exceed X, mmseqs auto-splits the search into multiple passes. Default 12G.
 		search_opts = "--search-type 4 -e #{Evalue} --max-seqs #{Max_target_seqs} " \
-		              "--threads #{threads} --split-memory-limit #{MmseqsSplitMem} -v 1"
+		              "--threads #{threads} --split-memory-limit #{MmseqsSplitMem} " \
+		              "--sub-mat #{sub_mat_path} -v 1"
 
 		## per-step mmseqs logs land in cat/all/ so FinalLogCleanup can ingest them into the `logs` table.
 		ldir = "#{Odir}/cat/all"
 
-		if File.exist?(Flen_i)
+		if RefMode
+			## with-reference mode: build a query DB from input.fasta only, then run
+			## `mmseqs search input_db all_db` so the result HSPs cover input×input and
+			## input×ref pairs (ref×ref came from ref-duckdb already, via 01-1.ref.prep).
+			input_fa = "#{ldir}/input.fasta"
+			input_db = "#{Fa}.input.mmdb"
+			res = "#{tmpdir}/result"
+			m8  = "#{tmpdir}/result.m8"
+			sh BuildDBCmd.call(mode: "mmseqs-tblastx", fasta: input_fa, db_path: input_db,
+			                   log: "#{input_fa}.createdb.log", create_index: false)
+			sh "mmseqs search #{input_db} #{DB} #{res} #{tmpdir}/s #{search_opts} >#{ldir}/mmseqs_search.log 2>&1"
+			sh "mmseqs convertalis #{input_db} #{DB} #{res} #{m8} --format-output #{fmt} >#{ldir}/mmseqs_convertalis.log 2>&1"
+			sh "ruby #{m8_split} #{m8} #{Odir}/node"
+		elsif File.exist?(Flen_i)
 			## 2D mode: query (node) vs all, and input vs input self-blast.
 			query_db = "#{Fa}.query.mmdb"
 			input_db = "#{Fa}.input.mmdb"
@@ -623,10 +816,14 @@ task "02-4.make_self_tblastx", ["step"] do |t, args|
 	## populate self_scores via pure SQL: self-hit is where que == sub.
 	## In 2D mode the same seq_id appears under both kind='node' and kind='input';
 	## we prefer the 'input' value (matches legacy iteration order: node first, input last wins).
+	##
+	## In ref mode self_scores already contains ref entries imported from --ref-duckdb
+	## (01-1.ref.prep). We only want to ADD input self_scores. summary_pre holds only
+	## input × * HSPs in ref mode, so the INSERT naturally scopes to input ids.
+	delete_clause = RefMode ? "" : "DELETE FROM self_scores;\n"
 	DuckDBUtil.exec_sql <<~SQL
 		BEGIN;
-		DELETE FROM self_scores;
-		INSERT INTO self_scores (seq_id, self_score)
+		#{delete_clause}INSERT INTO self_scores (seq_id, self_score)
 			SELECT que, (que_score + sub_score) * 0.5 FROM (
 				SELECT que, que_score, sub_score,
 				       ROW_NUMBER() OVER (PARTITION BY que ORDER BY CASE kind WHEN 'input' THEN 0 ELSE 1 END) AS rn
@@ -652,18 +849,25 @@ task "02-5.2D.make_summary_tsv", ["step"] do |t, args|
 	SQL
 	sh "rm -f #{out_tsv}"
 end
-desc "02-5.make_summary_tsv" ### normal mode
+desc "02-5.make_summary_tsv" ### normal mode (also used by ref mode)
 task "02-5.make_summary_tsv", ["step"] do |t, args|
 	PrintStatus.call(args.step, NumStep, "START", t)
 	script   = "#{File.dirname(__FILE__)}/script/#{t.name}.rb"
 	tdir     = "#{Odir}/tmp"; mkdir_p tdir
 	out_tsv  = "#{tdir}/02-5.all.tsv"
+	## In ref mode the script needs to know which seq_ids are refs so that input×ref HSPs
+	## (only one direction exists in summary_pre) are not discarded by the legacy
+	## shorter→longer dedup filter. Pass ref count via env so the script can build the set.
+	ENV["ref_mode"] = RefMode ? "true" : ""
 	sh "ruby #{script} #{out_tsv}"
 
+	## In ref mode summary_tsv already contains ref×ref rows (imported from --ref-duckdb).
+	## summary_pre only holds input × * HSPs, so the new rows append cleanly without
+	## colliding with the imported ref×ref rows. Skip DELETE to preserve them.
+	delete_clause = RefMode ? "" : "DELETE FROM summary_tsv;\n"
 	DuckDBUtil.exec_sql <<~SQL
 		BEGIN;
-		DELETE FROM summary_tsv;
-		COPY summary_tsv FROM '#{out_tsv}' (FORMAT CSV, DELIMITER E'\\t', HEADER false);
+		#{delete_clause}COPY summary_tsv FROM '#{out_tsv}' (FORMAT CSV, DELIMITER E'\\t', HEADER false);
 		CREATE INDEX IF NOT EXISTS idx_stsv_node ON summary_tsv(node);
 		COMMIT;
 	SQL

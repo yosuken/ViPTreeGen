@@ -16,8 +16,8 @@ The proteomic tree approach is effective to investigate genomes of newly sequenc
 ViPTreeGen has been developed as a part of [the ViPTree server project](http://www.genome.jp/viptree).
 
 ## requirements
-* BLAST+ (only when `--mode tblastx`, the default)
-* MMseqs2 (only when `--mode mmseqs`)
+* MMseqs2 (only when `--mode mmseqs-tblastx`, the default)
+* BLAST+ (only when `--mode tblastx`)
 * Ruby (ver >=2.0; tested with 2.x/3.x/4.x)
 * R (ver >=3.0)
 * DuckDB CLI (ver >=1.0) -- aggregates run state into `${outdir}/run.duckdb`
@@ -96,6 +96,14 @@ $ ViPTreeGen [options] <input fasta> <output dir>
   (2D mode)
     --2D           [query fasta] (default: off)     -- do not generate tree but similarity matrix of: 'query sequences' against 'input sequences'. 2D mode is designed to find the most related 'input sequence' for each 'query sequence'
 
+  (with-reference mode)
+    --ref-duckdb   [path/run.duckdb]                -- a previous ViPTreeGen run.duckdb that supplies the reference set.
+                                                       ref sequences, self_scores, and ref-vs-ref summary_tsv are imported
+                                                       from it; input is searched against (input ∪ ref) so that input×ref
+                                                       pairs are computed but ref×ref pairs are NOT recomputed. Output is
+                                                       the combined sim/dist matrix and tree over (ref ∪ input). Requires
+                                                       ref schema_version >= 2.0. Mutually exclusive with --2D.
+
   (use GNU parallel)
     --ncpus        [int]                            -- number of jobs in parallel
 
@@ -120,7 +128,7 @@ $ ViPTreeGen [options] <input fasta> <output dir>
 
 ## what changed in v2.0.0
 
-Two performance changes, both backward-compatible by default:
+Three changes — the first two improve performance, the third adds a new analysis mode. All are backward-compatible by default (existing invocations behave unchanged):
 
 ### 1. Rust binary for post-tBLASTx pipeline
 
@@ -140,31 +148,66 @@ Empirical benchmarks (1,811 viral genomes, ~8.7M filtered HSPs, 12 threads):
 
 The DuckDB schema lost `blast_hits`, `blast_hits_filtered`, and `sbed_entries` (intermediate hit tables that the legacy SQL pipeline materialized). `summary_pre` and downstream tables are unchanged.
 
-### 2. `--mode {tblastx|mmseqs}` — alternative search engine
+### 2. `--mode {mmseqs-tblastx|tblastx}` — search engine choice (default: mmseqs-tblastx)
 
 ```
-ViPTreeGen --mode mmseqs [other options] <input fasta> <output dir>
+ViPTreeGen [other options] <input fasta> <output dir>            # uses mmseqs-tblastx, the new default
+ViPTreeGen --mode tblastx [other options] <input fasta> <output dir>   # legacy BLAST+ tblastx
 ```
 
-`--mode mmseqs` invokes a single global `mmseqs search --search-type 4` (translated 6-frame, BLOSUM62 default) against `all.fasta`, then `mmseqs convertalis` to BLAST-tab, then splits the result by query into per-node `tblastx.out` files for the existing Rust binary to consume. This is the recommended path for large datasets:
+Both modes compute the same kind of result: translated 6-frame all-vs-all alignment HSPs (i.e., tblastx-style). They differ only in implementation:
 
-| | tblastx (default) | mmseqs |
+- **`mmseqs-tblastx` (default)** invokes one global `mmseqs search --search-type 4` against `all.fasta`, then `mmseqs convertalis` to BLAST-tab, then splits the result by query into per-node `tblastx.out` files for the existing Rust binary to consume. Recommended for all but the smallest datasets.
+- **`tblastx`** runs the legacy NCBI BLAST+ `tblastx` binary per (query, split) batch via GNU parallel. Slower; needed for byte-exact reproduction of pre-v2.0 outputs.
+
+| | mmseqs-tblastx (default) | tblastx |
 |---|---|---|
-| Algorithm | NCBI BLAST+ heuristic | MMseqs2 prefilter + Smith-Waterman, translated 6-frame |
-| Matrix default | BLOSUM45 | BLOSUM62 (mmseqs2 built-in; BLOSUM45 not bundled) |
-| `-dbsize` | applied | ignored (mmseqs uses true target DB size) |
-| Parallelism | per-(query,split) via GNU parallel × `--ncpus` | one mmseqs process with `--threads N` |
-| EVG 1811 seq | 145 min (12 threads) | **12.5 min (5 threads)** — 11.6x speedup, measured |
-| Peak RAM (EVG, defaults) | < 1 GB | ~4 GB (mmseqs target index in memory) |
-| Peak RAM cap | (n/a) | `--mmseqs-split-memory-limit` (default `12G`); mmseqs auto-splits the target index if it would exceed the cap |
-| Result fidelity vs tblastx | (n/a) | NOT bit-identical; biological signal (SG matrix Pearson) typically > 0.99 |
+| Algorithm | MMseqs2 prefilter + Smith-Waterman, translated 6-frame | NCBI BLAST+ heuristic, translated 6-frame |
+| Matrix default | BLOSUM45 (bundled under `data/blosum45.out`, mmseqs2 format) | BLOSUM45 (NCBI BLAST+ default for tblastx is BLOSUM62; ViPTreeGen sets BLOSUM45 via `--matrix`) |
+| `--dbsize` | ignored (mmseqs uses true target DB size) | applied |
+| Parallelism | one mmseqs process with `--threads N` | per-(query,split) via GNU parallel × `--ncpus` |
+| EVG 1811 seq | **12.5 min (5 threads)** — 11.6x speedup, measured | 145 min (12 threads) |
+| Peak RAM (EVG, defaults) | ~4 GB (mmseqs target index in memory) | < 1 GB |
+| Peak RAM cap | `--mmseqs-split-memory-limit` (default `12G`); mmseqs auto-splits the target index if it would exceed the cap | (n/a) |
+| Result fidelity | reference for v2.0+ | NOT bit-identical to mmseqs-tblastx; matches pre-v2.0 byte-for-byte. SG matrix Pearson r typically > 0.99 between the two engines |
 
-Result fidelity caveat: mmseqs translated mode and tblastx differ algorithmically. The proteomic-tree topology is preserved (only a few branch swaps in deep clades), but exact SG scores will differ. Choose `--mode mmseqs` when you need throughput on >500 sequences; stick with `--mode tblastx` for maximum compatibility with prior runs.
+Result fidelity caveat: the two engines differ algorithmically (different matrices, heuristics, score normalization), so SG scores do not match bit-for-bit. The proteomic-tree topology is preserved (only a few branch swaps in deep clades). Choose `--mode tblastx` if you need to compare against pre-v2.0 runs; otherwise stay on the default `mmseqs-tblastx`.
 
 A `search_mode` row is written to `run.duckdb`'s `run_metadata` table so each output dir self-documents which engine produced it:
 ```
 duckdb path/to/output/run.duckdb "SELECT key, value FROM run_metadata WHERE key='search_mode'"
 ```
+
+### 3. `--ref-duckdb` — with-reference mode
+
+```
+ViPTreeGen --ref-duckdb path/to/ref/run.duckdb [other options] <input.fasta> <output dir>
+```
+
+For repeated analyses against a fixed reference panel (e.g., ICTV viruses, an institutional virus catalog, or a previous internal dataset), `--ref-duckdb` reuses a previously computed ViPTreeGen `run.duckdb` so that **only input-vs-input and input-vs-ref pairs are computed**; ref-vs-ref similarities, self-scores, and the ref FASTA itself are taken from the reference's `run.duckdb`. The output is a full combined sim/dist matrix and proteomic tree over `(ref ∪ input)`.
+
+Workflow:
+```
+# (one-time) build a reference run.duckdb from a large set:
+ViPTreeGen large_reference.fasta /data/refset_v1
+
+# (per request) classify a small input against that reference:
+ViPTreeGen --ref-duckdb /data/refset_v1/run.duckdb new_input.fasta /tmp/result
+```
+
+What gets imported from `--ref-duckdb` (via DuckDB `ATTACH ... (READ_ONLY)`):
+- `sequences` (including the nucleotide `seq` column → `all.fasta` is rebuilt without needing the original ref FASTA file)
+- `self_scores`
+- `summary_tsv` (ref-vs-ref pairs, already bidirectional)
+
+Notes:
+- Requires the reference to have been generated with **ViPTreeGen v2.0+** (`schema_version >= 2.0`); older `run.duckdb` files do not include the FASTA. The CLI prints a clear error and exits if the schema is too old.
+- Input seq IDs (after normalization) must not collide with ref IDs; the CLI lists conflicts and exits.
+- `--ref-duckdb` is mutually exclusive with `--2D`.
+- Works with both `--mode mmseqs-tblastx` (default) and `--mode tblastx`.
+- SG scores for `input × ref` pairs are not bit-identical to a baseline all-vs-all run because only one HSP direction (input → ref) is computed in this mode, while a baseline run computes both directions. In testing the residual difference is small (Pearson r ≈ 0.9993, max |Δ| ≈ 0.005 on small testdata); ref-vs-ref and input-vs-input cells match exactly.
+
+A `ref_mode=true` and `ref_duckdb_path=...` and `ref_count=N` are recorded in the output `run.duckdb`'s `run_metadata` for provenance.
 
 ## inspecting aggregated data
 ```

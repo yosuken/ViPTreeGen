@@ -13,6 +13,7 @@
 #
 
 require_relative "duckdb_util"
+require "set"
 
 out_tsv = ARGV[0]
 
@@ -30,6 +31,14 @@ node_ids = []
 DuckDBUtil.query_each("SELECT seq_id FROM sequences WHERE kind = 'node' ORDER BY ord"){ |l|
 	node_ids << l.strip
 }
+
+## In ref mode the first `ref_count` node ids (in ord) are reference sequences. Build the set
+## so the legacy shorter→longer filter can be skipped for input × ref pairs (only one direction
+## of those HSPs exists in summary_pre, so the filter would otherwise discard ~half of them).
+ref_ids = Set.new
+ref_count = 0
+DuckDBUtil.query_each("SELECT value FROM run_metadata WHERE key = 'ref_count'"){ |l| ref_count = l.strip.to_i }
+ref_ids.merge(node_ids.first(ref_count)) if ref_count > 0
 
 ## id2self from self_scores
 id2self = {}
@@ -51,8 +60,13 @@ DuckDBUtil.query_each(
 ){ |l|
 	a = l.split("\t")[2..-1]  # drop ranks (match legacy "[2..-1]")
 	que, sub = a[0..1]
-	## USE ONLY HSP of [SHORTER => LONGER] (legacy filter)
-	next if (id2order[que] <=> id2order[sub]) == 1
+	## Legacy filter: keep only [SHORTER => LONGER] direction, then write both sides.
+	## In ref mode, input×ref HSPs exist in one direction only (ref is never queried);
+	## skip the filter for those pairs so they aren't lost when input happens to be longer.
+	## input×input pairs (both directions present) still get deduped.
+	unless ref_ids.include?(que) || ref_ids.include?(sub)
+		next if (id2order[que] <=> id2order[sub]) == 1
+	end
 	id2out[que] << a
 	id2out[sub] << a if que != sub
 }
@@ -68,7 +82,11 @@ open(out_tsv, "w"){ |fout|
 			p_idt = query_is_id ? a[4] : a[5]
 			p_len = query_is_id ? a[6] : a[7]
 			score = (a[2].to_i + a[3].to_i) * 0.5
-			s_scr = query_is_id ? id2self[id] : id2self[targ] # self score of shorter sequence
+			## SG normalises by self_score of the SHORTER sequence in the pair. In normal/2D modes
+			## the shorter→longer filter ensures `a[0]` (que) is the shorter side, but ref mode
+			## may keep input→ref HSPs where input is longer; pick the shorter id explicitly.
+			shorter_id = ((id2order[a[0]] <=> id2order[a[1]]) <= 0) ? a[0] : a[1]
+			s_scr = id2self[shorter_id]
 			sg    = "%.4f" % [score / s_scr, 1].min            # max of SG should be 1
 			outs << [targ, score, sg, p_idt, p_len]
 		}

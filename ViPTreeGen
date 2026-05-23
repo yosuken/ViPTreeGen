@@ -26,7 +26,7 @@ class ViPTreeGen
   def initialize
     @options = {
       # search engine
-      mode:                       "tblastx",
+      mode:                       "mmseqs-tblastx",
       mmseqs_split_memory_limit:  "12G",
 
       # tblastx / mmseqs shared
@@ -43,6 +43,9 @@ class ViPTreeGen
 
       # 2D
       twoD:    nil,
+
+      # with-reference mode (--ref-duckdb path/to/previous-run.duckdb)
+      ref_duckdb: nil,
 
       # computation
       ncpus:   nil,
@@ -84,10 +87,10 @@ class ViPTreeGen
     - <output dir> should not exist.
 
     \e[1;32m[dependencies]\e[0m
-        - tblastx                 -- BLAST+ program (required only when --mode tblastx, default);
-                                     https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download
-        - mmseqs2 (>=13.45111)    -- required only when --mode mmseqs;
+        - mmseqs2 (>=13.45111)    -- MMseqs2 (required only when --mode mmseqs-tblastx, the default);
                                      https://github.com/soedinglab/MMseqs2
+        - tblastx                 -- BLAST+ program (required only when --mode tblastx);
+                                     https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download
         - ruby (ver >=2.0)        -- orchestration; tested with 2.x/3.x/4.x
         - duckdb (>=1.0)          -- CLI; used to aggregate run state into ${outdir}/run.duckdb
         - viptreegen-summary-pre  -- bundled Rust binary; replaces the 01-3/02-1/02-2/02-3 Ruby+SQL path (new in v2.0.0).
@@ -104,9 +107,15 @@ class ViPTreeGen
         -v, --version
 
       (search engine)
-        --mode         [tblastx|mmseqs] (default: tblastx) -- all-vs-all search engine. mmseqs uses MMseqs2
-                                                              translated mode (--search-type 4); generally ~10x faster
-                                                              than tblastx but results are not bit-identical.
+        --mode         [mmseqs-tblastx|tblastx] (default: mmseqs-tblastx)
+                                                           -- engine for the translated-nucleotide 6-frame all-vs-all
+                                                              search. Both modes compute biologically-equivalent
+                                                              tblastx-style HSPs; they differ only in implementation.
+                                                              'mmseqs-tblastx' (default) uses MMseqs2 with
+                                                              `--search-type 4`; generally ~10x faster than tblastx
+                                                              but results are not bit-identical. 'tblastx' invokes
+                                                              the legacy NCBI BLAST+ tblastx binary (slower; needed
+                                                              for byte-exact reproduction of pre-v2.0 outputs).
         --mmseqs-split-memory-limit [size] (default: 12G)   -- peak RAM cap for mmseqs target index (e.g. 12G, 4G).
                                                               Pass through to mmseqs --split-memory-limit. Use a smaller
                                                               value on a memory-constrained host (slower but bounded).
@@ -116,7 +125,7 @@ class ViPTreeGen
 
       (tblastx / mmseqs shared)
         --cutlen       [>=10000]   (default: 100000)    -- length to split input sequences for faster computation
-        --dbsize       [int]       (default: 200000000) -- ignored in --mode mmseqs (no equivalent knob)
+        --dbsize       [int]       (default: 200000000) -- ignored in --mode mmseqs-tblastx (no equivalent knob)
         --matrix       [str]       (default: BLOSUM45)
         --evalue       [num]       (default: 1e-2)
         --min-idt      [int]       (default: 30)
@@ -128,6 +137,15 @@ class ViPTreeGen
 
       (2D mode)
         --2D           [query fasta] (default: off)     -- do not generate tree but similarity matrix of: 'query sequences' against 'input sequences'. 2D mode is designed to find the most related 'input sequence' for each 'query sequence'
+
+      (with-reference mode)
+        --ref-duckdb   [path/run.duckdb]                -- a previous ViPTreeGen run.duckdb that supplies the reference set.
+                                                           ref sequences, ref self_scores, and ref-vs-ref summary_tsv are
+                                                           imported from it; input is searched against (input ∪ ref) so that
+                                                           input-vs-ref pairs are computed but ref-vs-ref pairs are NOT
+                                                           recomputed. Output is the combined sim/dist matrix and tree over
+                                                           (ref ∪ input). Requires schema_version >= 2.0 (i.e., reference
+                                                           was generated with ViPTreeGen v2.0+). Mutually exclusive with --2D.
 
       (use GNU parallel)
         --ncpus        [int]                            -- number of jobs in parallel
@@ -160,7 +178,7 @@ class ViPTreeGen
       opts.banner = usage
 
       ## search engine
-      opts.on("--mode MODE", "search engine: tblastx|mmseqs (default: tblastx)") do |v|
+      opts.on("--mode MODE", "search engine: tblastx|mmseqs-tblastx (default: mmseqs-tblastx)") do |v|
         @options[:mode] = v
       end
       opts.on("--mmseqs-split-memory-limit SIZE",
@@ -184,6 +202,11 @@ class ViPTreeGen
       ## 2D mode
       opts.on("--2D FASTA",
               "query fasta for 2D mode (similarity matrix of query x input)") { |v| @options[:twoD] = v }
+
+      ## with-reference mode
+      opts.on("--ref-duckdb DBFILE",
+              "previous ViPTreeGen run.duckdb (provides ref sequences, self_scores, and ref-vs-ref summary_tsv; " \
+              "input is searched against (input ∪ ref), ref-vs-ref pairs are not recomputed)") { |v| @options[:ref_duckdb] = v }
 
       ## computation
       opts.on("--ncpus INT")                { |v| @options[:ncpus] = v }
@@ -223,13 +246,23 @@ class ViPTreeGen
       $stderr.puts "#{ERRMSG} output directory already exists (#{@dir})"
       exit 1
     end
-    unless %w[tblastx mmseqs].include?(@options[:mode])
+    unless %w[tblastx mmseqs-tblastx].include?(@options[:mode])
       $stderr.puts "#{ERRMSG} --mode must be 'tblastx' or 'mmseqs' (got: '#{@options[:mode]}')"
       exit 1
     end
     if @options[:twoD] && !File.file?(@options[:twoD])
       $stderr.puts "#{ERRMSG} --2D fasta not found: #{@options[:twoD]}"
       exit 1
+    end
+    if @options[:ref_duckdb]
+      if @options[:twoD]
+        $stderr.puts "#{ERRMSG} --ref-duckdb and --2D are mutually exclusive"
+        exit 1
+      end
+      unless File.file?(@options[:ref_duckdb])
+        $stderr.puts "#{ERRMSG} --ref-duckdb file not found: #{@options[:ref_duckdb]}"
+        exit 1
+      end
     end
   end
   # }}} def validate_options
@@ -240,8 +273,8 @@ class ViPTreeGen
     when "tblastx"
       check_cmd("tblastx",     "in BLAST+ package; required for --mode tblastx")
       check_cmd("makeblastdb", "in BLAST+ package; required for --mode tblastx")
-    when "mmseqs"
-      check_cmd("mmseqs",      "MMseqs2; required for --mode mmseqs")
+    when "mmseqs-tblastx"
+      check_cmd("mmseqs",      "MMseqs2; required for --mode mmseqs-tblastx")
     end
 
     unless @options[:notree]
@@ -326,6 +359,7 @@ class ViPTreeGen
       "mode"                      => @options[:mode],
       "mmseqs_split_memory_limit" => @options[:mmseqs_split_memory_limit],
       "twoD"                      => @options[:twoD].to_s,
+      "ref_duckdb"                => @options[:ref_duckdb].to_s,
       "method"                    => @options[:method],
       "queue"                     => @options[:queue].to_s,
       "ncpus"                     => @options[:ncpus].to_s,

@@ -23,11 +23,15 @@ module DuckDBUtil
       value VARCHAR
     );
 
+    -- seq: the nucleotide sequence itself, stored so that a finished run.duckdb
+    -- is sufficient to seed a downstream with-reference-mode run (--ref-duckdb)
+    -- without needing the original FASTA file alongside it. New in schema 2.0.
     CREATE TABLE IF NOT EXISTS sequences (
       seq_id VARCHAR NOT NULL,
       kind   VARCHAR NOT NULL,
       length INTEGER NOT NULL,
       ord    INTEGER NOT NULL,
+      seq    VARCHAR NOT NULL,
       PRIMARY KEY (seq_id, kind)
     );
 
