@@ -67,6 +67,12 @@ default search engine, schema, and on-disk output structure all change.
   ~6000 seqs) become a 6-chunk pipeline where a killed chunk loses at
   most a few minutes of work. Pass `0` to disable chunking (one global
   search). 2D mode keeps its existing two-search flow (not chunked).
+  Secondary benefit: because each chunk is a separate mmseqs process, a
+  smaller chunk size caps per-process CPU time and RAM. This lets a large
+  translated search complete under an interactive node's `ulimit -t`
+  (e.g. 30 min CPU) without a batch job — verified on 1780 T7-like phage
+  genomes (74 MB) where the default 2-chunk run was killed at the 30-min
+  CPU limit but `--mmseqs-tblastx-chunk-size 200` (9 chunks) completed.
 - **`--ref-duckdb PATH`** — with-reference mode. Reuse a previous v2.0 `run.duckdb`
   as the reference set: ref sequences, `self_scores`, and ref-vs-ref `summary_tsv`
   are ATTACHed and copied; only input-vs-input and input-vs-ref are recomputed. The

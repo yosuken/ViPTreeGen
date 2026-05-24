@@ -138,6 +138,11 @@ class ViPTreeGen
                                                               can pick up between chunks (each chunk records a
                                                               step_done marker in run_metadata). 0 disables
                                                               chunking (one global search). mmseqs-tblastx mode only.
+                                                              Each chunk is a separate mmseqs process, so a SMALLER
+                                                              chunk size also caps per-process CPU time / RAM --
+                                                              useful to stay under a `ulimit -t` (e.g. 30 min) on an
+                                                              interactive node without submitting a batch job
+                                                              (trade-off: more chunks = repeated index loads = slower).
         --mmseqs-split-memory-limit [size] (default: 12G)   -- peak RAM cap for mmseqs target index (e.g. 12G, 4G).
                                                               Pass through to mmseqs --split-memory-limit. Use a smaller
                                                               value on a memory-constrained host (slower but bounded).
