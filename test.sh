@@ -47,32 +47,33 @@ step "versions"
 blastn -version | head -1
 tblastx -version | head -1
 mmseqs version | head -1
+lastal --version | head -1
 duckdb --version
 ruby --version
 test -x rust/target/release/viptreegen-summary-pre \
 	|| fail "rust binary not built (run: cargo build --release --manifest-path rust/Cargo.toml)"
 
 # ----- mode coverage ------------------------------------------------------------
-for mode in tblastx mmseqs-tblastx blastn; do
+for mode in tblastx mmseqs-tblastx blastn last; do
 	step "mode=$mode (normal, --notree)"
 	out="$TEST_TMP/$mode"
 	./ViPTreeGen --notree --ncpus "$NCPUS" --mode "$mode" testdata/ssDNA.prok.8.fasta "$out"
 	test -f "$out/result/all.sim.matrix" || fail "$mode: result/all.sim.matrix missing"
 done
 
-# ----- numerical regression: golden matrices for all three modes ---------------
-# Each of tblastx / mmseqs-tblastx / blastn is deterministic given a fixed
-# BLAST+ / MMseqs2 version + the same input, so we ship frozen matrices under
+# ----- numerical regression: golden matrices for all four modes ----------------
+# Each of tblastx / mmseqs-tblastx / blastn / last is deterministic given a fixed
+# engine version + the same input, so we ship frozen matrices under
 # testdata/expected/ and bit-exact diff against them. If this fails after a
-# BLAST+ or MMseqs2 version bump, regenerate with:
-#   for m in tblastx mmseqs-tblastx blastn; do
+# BLAST+ / MMseqs2 / LAST version bump, regenerate with:
+#   for m in tblastx mmseqs-tblastx blastn last; do
 #     ./ViPTreeGen --notree --mode "$m" testdata/ssDNA.prok.8.fasta "/tmp/g_$m" \
 #       && cp /tmp/g_$m/result/all.{sim,dist}.matrix \
 #          "testdata/expected/ssDNA.prok.8.$m.sim.matrix" \
 #          "testdata/expected/ssDNA.prok.8.$m.dist.matrix" 2>/dev/null
 #   done
-# and document the new BLAST+ / MMseqs2 versions in the commit message.
-for mode in tblastx mmseqs-tblastx blastn; do
+# and document the new engine versions in the commit message.
+for mode in tblastx mmseqs-tblastx blastn last; do
 	step "golden matrix diff (--mode $mode bit-exact)"
 	diff -u "testdata/expected/ssDNA.prok.8.$mode.sim.matrix"  "$TEST_TMP/$mode/result/all.sim.matrix"  || fail "$mode sim.matrix differs from golden"
 	diff -u "testdata/expected/ssDNA.prok.8.$mode.dist.matrix" "$TEST_TMP/$mode/result/all.dist.matrix" || fail "$mode dist.matrix differs from golden"

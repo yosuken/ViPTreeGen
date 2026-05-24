@@ -273,6 +273,10 @@ BuildDBCmd = lambda do |mode:, fasta:, db_path:, log:, create_index: false|
 	case mode
 	when "tblastx", "blastn"
 		"makeblastdb -dbtype nucl -in #{fasta} -out #{db_path} -title #{File.basename(fasta)} 2>#{log}"
+	when "last"
+		## Default seeding (general-purpose spaced seeds); lastdb writes db_path.* index files.
+		## Scoring is set on the lastal side (megablast-matched) in 01-2.
+		"lastdb -P #{Nthreads} #{db_path} #{fasta} >#{log} 2>&1"
 	when "mmseqs-tblastx"
 		idx_tmp = "#{File.dirname(db_path)}/mmseqs_idx_tmp.#{File.basename(db_path)}"
 		cmds = ["mmseqs createdb #{fasta} #{db_path} >#{log} 2>&1"]
@@ -314,6 +318,10 @@ CheckVersion = lambda do |commands|
 						%|tblastx -version 2>&1|
 					when "blastn"
 						%|blastn -version 2>&1|
+					when "lastal"
+						%|lastal --version 2>&1|
+					when "lastdb"
+						%|lastdb --version 2>&1|
 					when "R"
 						%|LANG=C R --version 2>&1|
 					when "ape"
@@ -387,19 +395,25 @@ task :default do
 	##   - tblastx        : NCBI BLAST+ tblastx        (translated 6-frame, protein-level scoring) -- proteomic tree
 	##   - mmseqs-tblastx : MMseqs2 --search-type 4    (translated 6-frame, protein-level scoring) -- proteomic tree (default)
 	##   - blastn         : NCBI BLAST+ blastn         (nucleotide-vs-nucleotide)                  -- nucleotide tree (DiGAlign backend)
+	##   - last           : LAST (lastdb + lastal)    (nucleotide-vs-nucleotide, BlastTab output)  -- nucleotide tree (DiGAlign backend; PROTOTYPE)
 	## ('mmseqs-blastn' was evaluated and removed; see doc/mmseqs-blastn.md.)
 	Mode     = ENV["mode"] || "mmseqs-tblastx"
-	valid_modes = %w|tblastx mmseqs-tblastx blastn|
+	valid_modes = %w|tblastx mmseqs-tblastx blastn last|
 	raise("`--mode #{Mode}': must be one of #{valid_modes.join(', ')}") unless valid_modes.include?(Mode)
 	## Convenience flag: true for mmseqs-tblastx (single global search in 01-2 instead of per-(node,split) batches).
 	UsesMmseqs = (Mode == "mmseqs-tblastx")
+	## Engines that do ONE global search in 01-2 (then m8_split), vs per-(node,split) BLAST+ batches.
+	SingleGlobalSearch = UsesMmseqs || (Mode == "last")
 	## with-reference mode: previous-run `run.duckdb` providing ref sequences, self_scores, summary_tsv.
 	RefDuckDB = ENV["ref_duckdb"].to_s
 	RefMode   = !RefDuckDB.empty?
 	## --resume: continue from the last completed step (step_done markers in run_metadata).
 	Resume    = ENV["resume"].to_s == "true"
-	## In mmseqs modes the search DB uses a different prefix; in BLAST+ modes it equals the FASTA path.
-	DB       = UsesMmseqs ? "#{Fa}.mmdb" : Fa
+	## Search DB prefix: mmseqs uses .mmdb, LAST uses .lastdb, BLAST+ uses the FASTA path itself.
+	DB       = if UsesMmseqs then "#{Fa}.mmdb"
+	           elsif Mode == "last" then "#{Fa}.lastdb"
+	           else Fa
+	           end
 	## mmseqs target index memory cap (passed to mmseqs `--split-memory-limit`).
 	## Default 12G; user can override via --mmseqs-split-memory-limit.
 	MmseqsSplitMem = ENV["mmseqs_split_memory_limit"].to_s.empty? ? "12G" : ENV["mmseqs_split_memory_limit"]
@@ -416,7 +430,11 @@ task :default do
 	Wtime    = ENV["wtime"]||"24:00:00"
 	Ncpus    = ENV["ncpus"]||""
 
-	Max_target_seqs = 1_000_000
+	## Effectively "report all hits above the e-value threshold". Set far above any plausible
+	## dataset size to defeat blastn's max_target_seqs gotcha (it returns the first N hits in
+	## DB-scan order, not the top N by score) and mmseqs' default --max-seqs (300).
+	## LAST has no per-query cap by default (-N off), so this constant does not apply there.
+	Max_target_seqs = 100_000_000
 
 	TreeMethod = ENV["method"]||"bionj"
 
@@ -425,11 +443,14 @@ task :default do
 		%w|mmseqs|
 	elsif Mode == "tblastx"
 		%w|tblastx makeblastdb|
+	elsif Mode == "last"
+		%w|lastdb lastal|
 	else  # blastn
 		%w|blastn makeblastdb|
 	end
 	commands    = engine_cmds + %w|duckdb viptreegen-summary-pre R ape phangorn ruby|
-	commands += %w|parallel| if Ncpus != ""
+	## GNU parallel is only used by the per-(node,split) BLAST+ batch path (tblastx/blastn).
+	commands += %w|parallel| if Ncpus != "" && !SingleGlobalSearch
 	CheckVersion.call(commands)
 
 	### resume preflight: verify previous-run parameters match, and clean up partial state
@@ -492,6 +513,11 @@ task :default do
 					puts "\e[1;36m### resume: kept #{done_chunks.size} completed mmseqs chunk(s); " \
 					     "swept partial mmseqs state\e[0m"
 				end
+			elsif Mode == "last"
+				## last mode: single global lastal into mmseqs_tmp/, then m8_split. A killed run
+				## leaves a partial mmseqs_tmp; 01-2 re-runs the whole search fresh, so just sweep it.
+				sh "rm -rf #{Odir}/mmseqs_tmp 2>/dev/null || true"
+				sh "find #{Odir}/node #{Odir}/input -type f -name 'tblastx.out' -delete 2>/dev/null || true"
 			else
 				## tblastx/blastn mode: SearchCmd writes "<out>.tmp" first and `mv`s to "<out>"
 				## only on success, so "<out>" implies a clean tblastx/blastn exit. Sweep any
@@ -769,7 +795,7 @@ task "01-1.ref.prep", ["step"] do |t, args|
 		fque = "#{n0dir}/#{lab}.fasta"
 		open(fque, "w") { |f| f.puts [">"+lab, seq.scan(/.{1,70}/)] }
 
-		next if UsesMmseqs   # mmseqs runs one global search in 01-2; no per-node batches
+		next if SingleGlobalSearch   # mmseqs / last run one global search in 01-2; no per-node batches
 
 		if len > Cutlen
 			n0dir_s = "#{n0dir}/split"; mkdir_p n0dir_s
@@ -844,9 +870,9 @@ task "01-1.prep_for_tblastx", ["step"] do |t, args|
 					_fque.puts [">"+lab, seq.scan(/.{1,70}/)]
 				}
 
-				## mmseqs runs one global search in 01-2 -- skip per-(node, split) batch generation.
-				## m8_split.rb in 01-2 will create blast/tblastx.out files on demand.
-				next if UsesMmseqs
+				## mmseqs / last run one global search in 01-2 -- skip per-(node, split) batch
+				## generation. m8_split.rb in 01-2 will create blast/tblastx.out files on demand.
+				next if SingleGlobalSearch
 
 				if len > Cutlen
 					n0dir_s = "#{n0dir}/split"; mkdir_p n0dir_s
@@ -927,6 +953,31 @@ task "01-2.tblastx", ["step"] do |t, args|
 			puts "\e[1;36m### resume: #{skipped} tblastx/blastn batch entries already done, #{kept} to (re-)run\e[0m"
 		end
 		RunBatch.call(jdir, Qname, Nthreads, Mem, Wtime, Ncpus)
+
+	when "last"
+		## LAST nucleotide-vs-nucleotide. One global `lastal` call against the lastdb built in
+		## 01-1 (DB = all.fasta), emitting BlastTab (= blastn -outfmt 6, 12 cols), then split by
+		## query into per-node tblastx.out for the Rust binary. The query is all.fasta in normal
+		## mode, or input.fasta in with-reference mode (so only input×(input∪ref) is computed;
+		## ref×ref comes from --ref-duckdb via 01-1.ref.prep). 2D mode is rejected at the CLI.
+		##
+		## Scoring: -r 1 -q 2 -a 0 -b 2 matches blastn's megablast defaults (match +1, mismatch
+		## -2, no gap-open, gap-extend 2) so LAST and blastn weight HSPs comparably. -E: max
+		## e-value (same as blastn --evalue). LAST output is grouped by query, so m8_split's
+		## single-handle stream split works. LAST has no per-query cap by default (-N off), so
+		## it returns all hits above the e-value threshold (equivalent intent to Max_target_seqs).
+		require "fileutils"
+		threads  = Ncpus != "" ? Ncpus : "1"
+		tmpdir   = "#{Odir}/mmseqs_tmp"; FileUtils.mkdir_p(tmpdir)   # reuse the scratch dir name
+		m8_split = "#{File.dirname(__FILE__)}/script/m8_split.rb"
+		ldir     = "#{Odir}/cat/all"
+		m8       = "#{tmpdir}/last.m8"
+		query_fa = RefMode ? "#{ldir}/input.fasta" : Fa
+		sh "lastal -P #{threads} -E #{Evalue} -r 1 -q 2 -a 0 -b 2 -fBlastTab #{DB} #{query_fa} " \
+		   ">#{m8} 2>#{ldir}/lastal.log"
+		sh "grep -v '^#' #{m8} > #{m8}.clean || true"
+		sh "ruby #{m8_split} #{m8}.clean #{Odir}/node"
+		sh "rm -rf #{tmpdir}"
 
 	when "mmseqs-tblastx"
 		## mmseqs --search-type 4 = translated 6-frame protein alignment. Defaults BLOSUM62,

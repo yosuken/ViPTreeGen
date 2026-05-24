@@ -18,6 +18,7 @@ ViPTreeGen has been developed as a part of [the ViPTree server project](http://w
 ## requirements
 * MMseqs2 (when `--mode mmseqs-tblastx`, the default)
 * BLAST+ (when `--mode tblastx` or `--mode blastn`)
+* LAST (when `--mode last`)
 * Ruby (ver >=2.0; tested with 2.x/3.x/4.x)
 * R (ver >=3.0)
 * DuckDB CLI (ver >=1.0) -- aggregates run state into `${outdir}/run.duckdb`
@@ -183,21 +184,33 @@ Both modes compute the same kind of result: translated 6-frame all-vs-all alignm
 
 Result fidelity caveat: the two engines differ algorithmically (different matrices, heuristics, score normalization), so SG scores do not match bit-for-bit. The proteomic-tree topology is preserved (only a few branch swaps in deep clades). Choose `--mode tblastx` if you need to compare against pre-v2.0 runs; otherwise stay on the default `mmseqs-tblastx`.
 
-### 2b. `--mode blastn` — nucleotide tree (DiGAlign backend)
+### 2b. `--mode {blastn|last}` — nucleotide tree (DiGAlign backend)
 
 In addition to the two proteomic-tree modes above, ViPTreeGen v2.0 supports nucleotide-vs-nucleotide search for use as the backend of the **DiGAlign** web tool. The output structure is identical (`result/all.{sim,dist}.matrix` + Newick tree), but the tree is a **nucleotide-identity tree, NOT a proteomic tree** — biological interpretation differs.
 
 ```
-ViPTreeGen --mode blastn [options] <input.fasta> <output dir>
+ViPTreeGen --mode blastn [options] <input.fasta> <output dir>   # NCBI BLAST+ blastn
+ViPTreeGen --mode last   [options] <input.fasta> <output dir>   # LAST (lastdb + lastal)
 ```
+
+**Which one?** Neither is universally faster — it depends on the dataset:
+
+| workload | recommended | why |
+|---|---|---|
+| many small genomes (phages, ssDNA viruses, metagenomic contigs; 100s–1000s) | **`last`** | much faster + far lower memory (e.g. 870 × 2.7 kb: LAST 20 s / 21 MB vs blastn 154 s / 1.7 GB) |
+| few large genomes (herpesviruses, poxviruses, NCLDV / giant viruses) | **`blastn`** | faster + lower memory (e.g. 23 × 1.2 Mb: blastn 123 s / 197 MB vs LAST 355 s / 866 MB) |
+| byte-exact comparability with pre-v2.0 / published results | **`blastn`** | established reference |
+
+Both produce highly-correlated matrices (Pearson 0.86–0.99) and near-interchangeable virus clusters (ARI 0.81–0.88); LAST is consistently a bit more sensitive (detects more pairs, extends alignments further). See [`doc/engine-benchmark.md`](doc/engine-benchmark.md) for the full three-dataset comparison.
 
 Notes:
 
-- Feeds the same SG-style scoring pipeline (Rust binary → DuckDB → matrix) as the proteomic-tree modes, but at the nucleotide level.
-- `--matrix` is **ignored** (blastn uses its `-reward`/`-penalty` defaults).
-- `--min-aalen` filter is in **nucleotide units** in this mode (despite the option name); the default `30` is very lenient for nucleotide alignments. Consider raising it (e.g., `--min-aalen 90`) for stricter HSP filtering.
-- Use the proteomic-tree modes (`tblastx` / `mmseqs-tblastx`) for **ViPTree** analyses; use this mode for **DiGAlign** analyses.
-- An `mmseqs-blastn` mode was evaluated (mmseqs `--search-type 3`) but removed — at our typical input size it was ~9× slower than `blastn`, used ~80× more RAM, and was ~16% less sensitive (Pearson r ≈ 0.70 vs `blastn`). See [`doc/mmseqs-blastn.md`](doc/mmseqs-blastn.md) for the full evaluation.
+- Both feed the same SG-style scoring pipeline (Rust binary → DuckDB → matrix) as the proteomic-tree modes, but at the nucleotide level.
+- `--matrix` is **ignored** in nucleotide modes (blastn uses its `-reward`/`-penalty` defaults; LAST uses megablast-matched `-r 1 -q 2 -a 0 -b 2`).
+- `--min-aalen` filter is in **nucleotide units** here (despite the option name); the default `30` is lenient. Consider raising it (e.g., `--min-aalen 90`) for stricter HSP filtering.
+- `--mode last` runs one global `lastal` (like the mmseqs path) and does **not** support 2D mode; use `--mode blastn` for 2D.
+- Use the proteomic-tree modes (`tblastx` / `mmseqs-tblastx`) for **ViPTree** analyses; use the nucleotide modes for **DiGAlign** analyses.
+- `mmseqs-blastn` (mmseqs `--search-type 3`) and MUMmer4 `nucmer` were also evaluated and **not adopted** — see [`doc/mmseqs-blastn.md`](doc/mmseqs-blastn.md) and [`doc/mummer4-nucmer.md`](doc/mummer4-nucmer.md).
 
 A `search_mode` row is written to `run.duckdb`'s `run_metadata` table so each output dir self-documents which engine produced it:
 ```

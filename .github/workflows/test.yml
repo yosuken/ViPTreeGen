@@ -31,6 +31,7 @@ jobs:
             -c bioconda -c conda-forge
             blast=2.17.0
             mmseqs2=13.45111
+            last=1650
             duckdb
             ruby
             r-base
@@ -38,9 +39,9 @@ jobs:
             r-phangorn
             rust
             gnu-parallel
-          # blast / mmseqs2 are pinned because testdata/expected/ golden matrices are
-          # bit-exact diffs that depend on the BLAST+ and MMseqs2 versions. Bump these
-          # together with the goldens (run test.sh locally, copy new outputs to
+          # blast / mmseqs2 / last are pinned because testdata/expected/ golden matrices
+          # are bit-exact diffs that depend on the engine versions. Bump these together
+          # with the goldens (run test.sh locally, copy new outputs to
           # testdata/expected/, commit).
 
       - name: Build bundled Rust binary

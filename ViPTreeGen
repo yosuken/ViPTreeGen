@@ -111,7 +111,7 @@ class ViPTreeGen
         -v, --version
 
       (search engine)
-        --mode  [mmseqs-tblastx|tblastx|blastn] (default: mmseqs-tblastx)
+        --mode  [mmseqs-tblastx|tblastx|blastn|last] (default: mmseqs-tblastx)
                                                            -- search engine x algorithm.
                                                               'mmseqs-tblastx' (default) : MMseqs2 --search-type 4,
                                                                                            translated 6-frame; proteomic
@@ -123,9 +123,16 @@ class ViPTreeGen
                                                               'blastn'                   : NCBI BLAST+ blastn, nucleotide-vs-
                                                                                            nucleotide; nucleotide tree
                                                                                            (DiGAlign backend).
+                                                              'last'                     : LAST (lastdb+lastal), nucleotide-vs-
+                                                                                           nucleotide; nucleotide tree
+                                                                                           (DiGAlign backend). Faster/lower-mem
+                                                                                           than blastn for MANY SMALL genomes;
+                                                                                           blastn is faster for FEW LARGE
+                                                                                           genomes. See doc/engine-benchmark.md.
+                                                                                           (no 2D mode support)
 
-                                                              ('mmseqs-blastn' was evaluated and removed -- see
-                                                              doc/mmseqs-blastn.md for the slow/insensitive findings.)
+                                                              ('mmseqs-blastn' and MUMmer4 nucmer were evaluated and not
+                                                              adopted -- see doc/mmseqs-blastn.md and doc/mummer4-nucmer.md.)
         --mmseqs-tblastx-chunk-size [int]  (default: 1000)  -- split query fasta into N-sequence chunks
                                                               and run mmseqs search per chunk so that --resume
                                                               can pick up between chunks (each chunk records a
@@ -290,13 +297,17 @@ class ViPTreeGen
         exit 1
       end
     end
-    valid_modes = %w[tblastx mmseqs-tblastx blastn]
+    valid_modes = %w[tblastx mmseqs-tblastx blastn last]
     unless valid_modes.include?(@options[:mode])
       $stderr.puts "#{ERRMSG} --mode must be one of #{valid_modes.join(', ')} (got: '#{@options[:mode]}')"
       exit 1
     end
     if @options[:twoD] && !File.file?(@options[:twoD])
       $stderr.puts "#{ERRMSG} --2D fasta not found: #{@options[:twoD]}"
+      exit 1
+    end
+    if @options[:twoD] && @options[:mode] == "last"
+      $stderr.puts "#{ERRMSG} --mode last does not support 2D mode yet; use --mode blastn for 2D"
       exit 1
     end
     if @options[:ref_duckdb]
@@ -323,6 +334,9 @@ class ViPTreeGen
       check_cmd("makeblastdb", "in BLAST+ package; required for --mode blastn")
     when "mmseqs-tblastx"
       check_cmd("mmseqs",      "MMseqs2; required for --mode mmseqs-tblastx")
+    when "last"
+      check_cmd("lastdb",      "LAST package; required for --mode last")
+      check_cmd("lastal",      "LAST package; required for --mode last")
     end
 
     unless @options[:notree]

@@ -26,14 +26,22 @@ default search engine, schema, and on-disk output structure all change.
   pre-v2.0 numbers byte-for-byte.
 
 ### Added
-- **`--mode {mmseqs-tblastx|tblastx|blastn}`** — search engine + algorithm choice.
+- **`--mode {mmseqs-tblastx|tblastx|blastn|last}`** — search engine + algorithm choice.
   - `mmseqs-tblastx` (default): MMseqs2 `--search-type 4`, translated 6-frame protein
     alignment. ~10× faster than legacy tblastx on EVG (1811 viral genomes:
     12.5 min vs 145 min). Proteomic tree.
   - `tblastx`: legacy NCBI BLAST+ tblastx. Slow, byte-exact pre-v2.0 reproduction.
   - `blastn`: NCBI BLAST+ nucleotide-vs-nucleotide. Backend for the DiGAlign web tool —
-    output is a *nucleotide tree*, NOT a proteomic tree. `mmseqs-blastn` was evaluated
-    and removed; see `doc/mmseqs-blastn.md`.
+    output is a *nucleotide tree*, NOT a proteomic tree.
+  - `last`: LAST (`lastdb` + `lastal -fBlastTab`), nucleotide-vs-nucleotide; DiGAlign
+    backend. BlastTab output is byte-compatible with `blastn -outfmt 6` (no converter).
+    Much faster + far lower memory than blastn on **many small** genomes (870 × 2.7 kb:
+    20 s / 21 MB vs blastn 154 s / 1.7 GB); blastn is faster on **few large** genomes
+    (23 × 1.2 Mb: blastn 123 s vs LAST 355 s). Matrices correlate Pearson 0.86–0.99 with
+    blastn; cluster membership ARI 0.81–0.88. No 2D support. Single global `lastal` call.
+  - `mmseqs-blastn` (mmseqs `--search-type 3`) and MUMmer4 `nucmer` were evaluated and
+    NOT adopted; see `doc/mmseqs-blastn.md`, `doc/mummer4-nucmer.md`, and the
+    three-dataset blastn-vs-LAST comparison in `doc/engine-benchmark.md`.
 - **`--resume`** — resume a previously-interrupted run from the last completed
   pipeline step. Each Rake task records `step_done:<task.name>` in
   `run_metadata` when it finishes; `--resume` reads those markers and skips
