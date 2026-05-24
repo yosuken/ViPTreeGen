@@ -193,15 +193,16 @@ ViPTreeGen --mode blastn [options] <input.fasta> <output dir>   # NCBI BLAST+ bl
 ViPTreeGen --mode last   [options] <input.fasta> <output dir>   # LAST (lastdb + lastal)
 ```
 
-**Which one?** Neither is universally faster — it depends on the dataset:
+**Which one?** Neither is universally faster — **pick by median genome size** (crossover ~40-50 kb):
 
-| workload | recommended | why |
+| median genome size | recommended | why |
 |---|---|---|
-| many small genomes (phages, ssDNA viruses, metagenomic contigs; 100s–1000s) | **`last`** | much faster + far lower memory (e.g. 870 × 2.7 kb: LAST 20 s / 21 MB vs blastn 154 s / 1.7 GB) |
-| few large genomes (herpesviruses, poxviruses, NCLDV / giant viruses) | **`blastn`** | faster + lower memory (e.g. 23 × 1.2 Mb: blastn 123 s / 197 MB vs LAST 355 s / 866 MB) |
+| ≲40 kb (ssDNA viruses, small phages, most metagenomic contigs) | **`last`** | much faster + far lower memory (e.g. 870 × 2.7 kb: LAST 20 s / 21 MB vs blastn 154 s / 1.7 GB) |
+| ~40-50 kb (T7-like phages, etc.) | either | roughly tied (1780 × 41 kb: LAST 520 s vs blastn 576 s) |
+| ≳50 kb (herpesviruses, poxviruses, NCLDV / giant viruses) | **`blastn`** | faster + lower memory (e.g. 23 × 1.2 Mb: blastn 123 s / 197 MB vs LAST 355 s / 866 MB) |
 | byte-exact comparability with pre-v2.0 / published results | **`blastn`** | established reference |
 
-Both produce highly-correlated matrices (Pearson 0.86–0.99) and near-interchangeable virus clusters (ARI 0.81–0.88); LAST is consistently a bit more sensitive (detects more pairs, extends alignments further). See [`doc/engine-benchmark.md`](doc/engine-benchmark.md) for the full three-dataset comparison.
+Both produce highly-correlated matrices (Pearson 0.86–0.99) and near-interchangeable virus clusters (ARI 0.81–0.88); LAST is consistently a bit more sensitive (detects more pairs, extends alignments further). See [`doc/engine-benchmark.md`](doc/engine-benchmark.md) for the full four-dataset comparison.
 
 Notes:
 
