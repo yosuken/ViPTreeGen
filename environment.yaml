@@ -1,7 +1,7 @@
 name: viptreegen
 channels:
-  - bioconda
   - conda-forge
+  - bioconda
 dependencies:
   - blast >=2.9       # required only when --mode tblastx (default)
   - mmseqs2 >=13      # required only when --mode mmseqs (translated all-vs-all)
