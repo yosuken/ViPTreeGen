@@ -110,11 +110,38 @@ InitDuckDB = lambda do |mode:|
 		["evalue",      Evalue.to_s],
 		["tree_method", TreeMethod.to_s],
 		["start_time",  Time.now.iso8601],
+		## full runtime invocation + the remaining effective options (incl. defaults)
+		["command_line",              ENV["incmd"].to_s],
+		["idt",                       ENV["idt"].to_s],
+		["aalen",                     ENV["aalen"].to_s],
+		["ncpus",                     ENV["ncpus"].to_s],
+		["queue",                     ENV["queue"].to_s],
+		["wtime",                     ENV["wtime"].to_s],
+		["notree",                    (ENV["notree"].to_s == "true").to_s],
+		["resume",                    Resume.to_s],
+		["mmseqs_split_memory_limit", ENV["mmseqs_split_memory_limit"].to_s],
+		["mmseqs_tblastx_chunk_size", ENV["mmseqs_tblastx_chunk_size"].to_s],
+		["twoD_query",                ENV["twoD"].to_s],
 	]
 	sql = "DELETE FROM run_metadata;\n" + rows.map { |k, v|
 		"INSERT INTO run_metadata VALUES (#{DuckDBUtil.sql_str(k)}, #{DuckDBUtil.sql_str(v)});"
 	}.join("\n")
 	DuckDBUtil.exec_sql(sql)
+
+	## record resolved path + version of each external tool used by this run.
+	## The CLI collects these (mode-aware) and passes them as a JSON blob.
+	tools_json = ENV["tools_json"].to_s
+	unless tools_json.empty?
+		require "json"
+		tools = (JSON.parse(tools_json) rescue {})
+		unless tools.empty?
+			lit  = ->(v){ v.nil? || v.to_s.empty? ? "NULL" : DuckDBUtil.sql_str(v) }
+			tsql = "DELETE FROM tools;\n" + tools.map { |name, info|
+				"INSERT INTO tools VALUES (#{DuckDBUtil.sql_str(name)}, #{lit.call(info["path"])}, #{lit.call(info["version"])});"
+			}.join("\n")
+			DuckDBUtil.exec_sql(tsql)
+		end
+	end
 end
 
 FinalLogCleanup = lambda do

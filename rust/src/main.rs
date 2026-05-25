@@ -78,6 +78,10 @@ fn parse_args() -> Opts {
             "--threads" => opts.threads = args.next().expect("--threads").parse().unwrap(),
             "--output"  => opts.output  = args.next().expect("--output").into(),
             "-h" | "--help" => { print_help(); std::process::exit(0); }
+            "-V" | "--version" => {
+                println!("viptreegen-summary-pre {}", env!("CARGO_PKG_VERSION"));
+                std::process::exit(0);
+            }
             x => { eprintln!("unknown arg: {x}"); print_help(); std::process::exit(2); }
         }
     }

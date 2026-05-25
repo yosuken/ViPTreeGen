@@ -78,6 +78,15 @@ module DuckDBUtil
       ts        TIMESTAMP,
       content   VARCHAR
     );
+
+    -- resolved path + reported version of each external tool actually used by
+    -- this run (engine binaries, duckdb, ruby, R, parallel, the bundled Rust
+    -- binary). Populated by InitDuckDB from the CLI at run start.
+    CREATE TABLE IF NOT EXISTS tools (
+      name    VARCHAR PRIMARY KEY,
+      path    VARCHAR,
+      version VARCHAR
+    );
   SQL
 
   def db_path

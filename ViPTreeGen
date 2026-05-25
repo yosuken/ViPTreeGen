@@ -15,6 +15,8 @@ STDOUT.sync = true ### real-time output through tee
 require "optparse"
 require "fileutils"
 require "open3"
+require "json"
+require "rbconfig"
 
 class ViPTreeGen
   VERSION  = "2.0.0"
@@ -386,6 +388,73 @@ class ViPTreeGen
   end
   # }}} def check_dependencies
 
+  # {{{ def collect_tools
+  # version command per tool; we keep the first line of its output.
+  VERSION_CMD = {
+    "tblastx"     => %w[tblastx -version],
+    "blastn"      => %w[blastn -version],
+    "makeblastdb" => %w[makeblastdb -version],
+    "mmseqs"      => %w[mmseqs version],
+    "lastdb"      => %w[lastdb --version],
+    "lastal"      => %w[lastal --version],
+    "duckdb"      => %w[duckdb --version],
+    "parallel"    => %w[parallel --version],
+    "R"           => %w[R --version],
+  }.freeze
+
+  # Resolve path + reported version of every external tool this run will use
+  # (mode-aware, mirrors check_dependencies). Returns name => {"path"=>, "version"=>}.
+  # Stored in the run.duckdb `tools` table for provenance/reproducibility.
+  def collect_tools
+    names = case @options[:mode]
+            when "tblastx"        then %w[tblastx makeblastdb]
+            when "blastn"         then %w[blastn makeblastdb]
+            when "mmseqs-tblastx" then %w[mmseqs]
+            when "last"           then %w[lastdb lastal]
+            else []
+            end
+    names << "R"        unless @options[:notree]
+    names << "parallel" if     @options[:ncpus]
+    names << "duckdb"
+
+    tools = {}
+    names.each do |n|
+      path = which(n)
+      tools[n] = { "path" => path, "version" => (path ? first_line(VERSION_CMD[n]) : nil) }
+    end
+
+    # bundled Rust binary (resolved the same way as check_dependencies)
+    sp = summary_pre_path
+    tools["viptreegen-summary-pre"] = { "path" => sp, "version" => (sp ? first_line([sp, "--version"]) : nil) }
+
+    # the ruby interpreter running this orchestrator
+    tools["ruby"] = { "path" => RbConfig.ruby, "version" => RUBY_VERSION }
+
+    tools
+  end
+
+  def which(cmd)
+    out, st = Open3.capture2e("bash", "-c", "command -v #{cmd}")
+    st.success? ? out.lines.first.to_s.chomp : nil
+  end
+
+  def summary_pre_path
+    return ENV["VIPTREEGEN_SUMMARY_PRE"] if ENV["VIPTREEGEN_SUMMARY_PRE"]
+    p = which("viptreegen-summary-pre")
+    return p if p && !p.empty?
+    local = File.join(@scrdir, "rust/target/release/viptreegen-summary-pre")
+    File.executable?(local) ? local : nil
+  end
+
+  def first_line(cmd)
+    return nil unless cmd
+    out, _ = Open3.capture2e(*cmd)
+    out.lines.first.to_s.chomp
+  rescue StandardError
+    nil
+  end
+  # }}} def collect_tools
+
   # {{{ def setup_logging
   def setup_logging
     @logdir  = File.join(@dir, "log")
@@ -435,6 +504,8 @@ class ViPTreeGen
       "ncpus"                     => @options[:ncpus].to_s,
       "wtime"                     => @options[:wtime],
       "notree"                    => @options[:notree] ? "true" : "",
+      "incmd"                     => @incmd,
+      "tools_json"                => collect_tools.to_json,
     }
     env_vars.each { |k, v| ENV[k] = v }
 

@@ -26,6 +26,14 @@ default search engine, schema, and on-disk output structure all change.
   pre-v2.0 numbers byte-for-byte.
 
 ### Added
+- **Tool provenance in `run.duckdb`** — a new `tools` table records the resolved
+  path and reported version of every external tool the run actually used
+  (engine binaries, `duckdb`, `parallel`, `R`, `ruby`, and the bundled
+  `viptreegen-summary-pre`), selected mode-aware. `run_metadata` additionally
+  stores the full `command_line` and every effective option (idt, aalen, ncpus,
+  queue, wtime, notree, resume, mmseqs split/chunk sizes, 2D query path), so a
+  finished `run.duckdb` fully captures how it was produced.
+  `viptreegen-summary-pre` gained a `--version` flag for this.
 - **Gzip-compressed FASTA input** — `<input fasta>` and the `--2D` query file may
   be gzipped. Detection is by the gzip magic bytes (`1f 8b`), so it works
   regardless of extension (`.gz`, `.fasta.gz`, or none). No flag needed.
