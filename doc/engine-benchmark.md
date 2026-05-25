@@ -106,7 +106,7 @@ module load blast+/2.17.0 last/1650 mmseqs2/13-45111
 #   Begomovirus, Orthoherpesviridae, Imitervirales
 # then for each engine:
 for m in blastn last mmseqs-tblastx; do
-  /usr/bin/time -v ./ViPTreeGen --notree --mode "$m" --ncpus 4 subset.fasta out_"$m"
+  /usr/bin/time -v ./viptreegen --notree --mode "$m" --ncpus 4 subset.fasta out_"$m"
 done
 # compare result/all.sim.matrix across out_* (Pearson, saturation, bionj + RF.dist, ARI)
 ```

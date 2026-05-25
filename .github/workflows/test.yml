@@ -72,8 +72,8 @@ jobs:
         # `standard`/`rubocop` are stricter but require buy-in to a style guide;
         # `ruby -c` catches genuine parse errors without forcing a style war.
         run: |
-          ruby -c ViPTreeGen
-          ruby -c ViPTreeGen.rake
+          ruby -c viptreegen
+          ruby -c viptreegen.rake
           for f in script/*.rb; do ruby -c "$f"; done
 
       - name: cargo check (catches real compile errors)

@@ -1,5 +1,5 @@
 #
-#  ViPTreeGen.rake - a command line tool for viral proteomic tree generation
+#  viptreegen.rake - a command line tool for viral proteomic tree generation
 #
 #    Copyright: 2017 (C) Yosuke Nishimura (yosuke@kuicr.kyoto-u.ac.jp)
 #    License: MIT license

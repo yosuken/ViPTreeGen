@@ -24,20 +24,20 @@ build:
 
     # 2) Ruby/R orchestration files
     mkdir -p $PREFIX/share/{{ name }} $PREFIX/bin
-    cp -r ViPTreeGen ViPTreeGen.rake script $PREFIX/share/{{ name }}/
-    chmod +x $PREFIX/share/{{ name }}/ViPTreeGen
-    cat > $PREFIX/bin/ViPTreeGen <<'EOF'
+    cp -r viptreegen viptreegen.rake script $PREFIX/share/{{ name }}/
+    chmod +x $PREFIX/share/{{ name }}/viptreegen
+    cat > $PREFIX/bin/viptreegen <<'EOF'
     #!/bin/bash
     DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")"/../share/{{ name }} && pwd)"
-    exec "$DIR/ViPTreeGen" "$@"
+    exec "$DIR/viptreegen" "$@"
     EOF
-    chmod +x $PREFIX/bin/ViPTreeGen
+    chmod +x $PREFIX/bin/viptreegen
 
-    # lowercase alias matching the conda package name. Skip on case-insensitive
-    # filesystems (e.g. macOS) where ViPTreeGen/viptreegen are the same path and
-    # the lowercase invocation already resolves to ViPTreeGen.
-    if [ ! -e "$PREFIX/bin/viptreegen" ]; then
-      ln -s ViPTreeGen "$PREFIX/bin/viptreegen"
+    # backward-compatible CamelCase alias (the command was `ViPTreeGen` before v2.0).
+    # Skip on case-insensitive filesystems (e.g. macOS) where ViPTreeGen/viptreegen are
+    # the same path and the CamelCase invocation already resolves to viptreegen.
+    if [ ! -e "$PREFIX/bin/ViPTreeGen" ]; then
+      ln -s viptreegen "$PREFIX/bin/ViPTreeGen"
     fi
 
 requirements:
@@ -57,8 +57,8 @@ requirements:
 
 test:
   commands:
-    - ViPTreeGen --help 2>&1 | grep -q "ViPTreeGen ver"
-    - viptreegen --help 2>&1 | grep -q "ViPTreeGen ver"   # lowercase alias
+    - viptreegen --help 2>&1 | grep -q "ViPTreeGen ver"
+    - ViPTreeGen --help 2>&1 | grep -q "ViPTreeGen ver"   # backward-compat alias
     - viptreegen-summary-pre --help 2>&1 | grep -q "Usage:"
     - mmseqs version 2>&1 | grep -qE "[0-9]"
 

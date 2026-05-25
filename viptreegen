@@ -6,7 +6,7 @@
 #    License: MIT
 #
 #  Entry point. Parses CLI options, validates inputs, checks dependencies,
-#  then invokes `rake -f ViPTreeGen.rake` with the resolved options passed via
+#  then invokes `rake -f viptreegen.rake` with the resolved options passed via
 #  environment variables.
 #
 
@@ -57,7 +57,7 @@ class ViPTreeGen
       resume:  false,
     }
 
-    @progname  = File.basename($0)
+    @progname  = "ViPTreeGen"   # display/brand name (the command is `viptreegen`; `ViPTreeGen` is a compat alias)
     @scrdir    = File.dirname(File.expand_path($0))
     @stime     = Time.now
     @stime_str = @stime.strftime("%Y-%m-%d %H:%M:%S")
@@ -83,7 +83,7 @@ class ViPTreeGen
     In those cases, use '--ncpus' for parallel computation.
 
     \e[1;32m[usage]\e[0m
-    $ #{@progname} [options] <input fasta> <output dir>
+    $ viptreegen [options] <input fasta> <output dir>
 
     - <input fasta> should be in nucleotide FASTA format and include at least 3 sequences.
       Gzip-compressed input is accepted (detected automatically; .gz/.fasta.gz or plain).
@@ -265,13 +265,13 @@ class ViPTreeGen
       parser.parse!
     rescue OptionParser::InvalidOption, OptionParser::InvalidArgument, OptionParser::MissingArgument => e
       $stderr.puts "#{ERRMSG} #{e.message}"
-      $stderr.puts "         execute '#{@progname} -h' for usage"
+      $stderr.puts "         execute 'viptreegen -h' for usage"
       exit 1
     end
 
     if ARGV.size != 2
       $stderr.puts "#{ERRMSG} require <input fasta> and <output dir> after options (got #{ARGV.size} positional)"
-      $stderr.puts "         execute '#{@progname} -h' for usage"
+      $stderr.puts "         execute 'viptreegen -h' for usage"
       exit 1
     end
     @fin = ARGV[0]
@@ -484,7 +484,7 @@ class ViPTreeGen
 
   # {{{ def run_rake
   def run_rake
-    rakefile = File.join(@scrdir, "#{@progname}.rake")
+    rakefile = File.join(@scrdir, "viptreegen.rake")
     env_vars = {
       "dir"                       => @dir,
       "fin"                       => @fin,

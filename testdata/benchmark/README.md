@@ -27,7 +27,7 @@ uncompressed); ViPTreeGen reads gzip input transparently (detected by magic
 bytes), so they can be passed directly:
 
 ```bash
-./ViPTreeGen --mode last testdata/benchmark/Begomovirus.40.fasta.gz out_bego
+./viptreegen --mode last testdata/benchmark/Begomovirus.40.fasta.gz out_bego
 ```
 
 FASTA headers are kept intact for provenance; ViPTreeGen uses the first

@@ -102,7 +102,7 @@ default search engine, schema, and on-disk output structure all change.
 - **Bundled BLOSUM45 substitution matrix** under `data/blosum45.out` (mmseqs2
   format, freely redistributable), passed to mmseqs via `--sub-mat`. Without this,
   mmseqs-tblastx would default to BLOSUM62 and disagree more with `--mode tblastx`.
-- **Ruby CLI entry point** (`./ViPTreeGen`) replaces the previous bash wrapper.
+- **Ruby CLI entry point** (`./viptreegen`) replaces the previous bash wrapper.
   OptionParser-based argument handling, mode-aware dependency check, structured
   logging via `Open3`.
 - **Per-step logs ingested into `run.duckdb`'s `logs` table** (with `source` like
@@ -115,6 +115,10 @@ default search engine, schema, and on-disk output structure all change.
   comparison for `--mode tblastx`, and tree generation.
 
 ### Changed
+- **Primary command renamed to lowercase `viptreegen`** (matching the conda package
+  name). The previous `ViPTreeGen` is kept as a backward-compatible alias (a guarded
+  symlink in the Bioconda package); from a source clone the command is `./viptreegen`.
+  The displayed brand name remains "ViPTreeGen".
 - **Minimum Ruby bumped to 3.0** (was 2.0). The CLI now rejects Ruby < 3.0.
 - **FASTA label normalization** (replace non-`[A-Za-z0-9.\-_]` with `_`, strip
   leading/trailing dots, collapse consecutive separators) is now factored into

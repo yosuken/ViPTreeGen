@@ -43,7 +43,7 @@ fail() {
 
 # ----- tool versions ------------------------------------------------------------
 step "versions"
-./ViPTreeGen --version
+./viptreegen --version
 blastn -version | head -1
 tblastx -version | head -1
 mmseqs version | head -1
@@ -57,7 +57,7 @@ test -x rust/target/release/viptreegen-summary-pre \
 for mode in tblastx mmseqs-tblastx blastn last; do
 	step "mode=$mode (normal, --notree)"
 	out="$TEST_TMP/$mode"
-	./ViPTreeGen --notree --ncpus "$NCPUS" --mode "$mode" testdata/ssDNA.prok.8.fasta "$out"
+	./viptreegen --notree --ncpus "$NCPUS" --mode "$mode" testdata/ssDNA.prok.8.fasta "$out"
 	test -f "$out/result/all.sim.matrix" || fail "$mode: result/all.sim.matrix missing"
 done
 
@@ -67,7 +67,7 @@ done
 # testdata/expected/ and bit-exact diff against them. If this fails after a
 # BLAST+ / MMseqs2 / LAST version bump, regenerate with:
 #   for m in tblastx mmseqs-tblastx blastn last; do
-#     ./ViPTreeGen --notree --mode "$m" testdata/ssDNA.prok.8.fasta "/tmp/g_$m" \
+#     ./viptreegen --notree --mode "$m" testdata/ssDNA.prok.8.fasta "/tmp/g_$m" \
 #       && cp /tmp/g_$m/result/all.{sim,dist}.matrix \
 #          "testdata/expected/ssDNA.prok.8.$m.sim.matrix" \
 #          "testdata/expected/ssDNA.prok.8.$m.dist.matrix" 2>/dev/null
@@ -81,20 +81,20 @@ done
 
 # ----- label normalization ------------------------------------------------------
 step "long-name normalization (exercises ParseFastaEntries)"
-./ViPTreeGen --notree --ncpus "$NCPUS" testdata/ssDNA.prok.8.long_name.fasta "$TEST_TMP/longname"
+./viptreegen --notree --ncpus "$NCPUS" testdata/ssDNA.prok.8.long_name.fasta "$TEST_TMP/longname"
 test -f "$TEST_TMP/longname/result/all.sim.matrix" || fail "longname: result/all.sim.matrix missing"
 
 # ----- gzip input ---------------------------------------------------------------
 step "gzip-compressed input (auto-detected by magic bytes)"
 gzip -c testdata/ssDNA.prok.8.fasta > "$TEST_TMP/ssDNA.prok.8.fasta.gz"
-./ViPTreeGen --notree --ncpus "$NCPUS" --mode blastn "$TEST_TMP/ssDNA.prok.8.fasta.gz" "$TEST_TMP/gz"
+./viptreegen --notree --ncpus "$NCPUS" --mode blastn "$TEST_TMP/ssDNA.prok.8.fasta.gz" "$TEST_TMP/gz"
 # gz input must produce the exact same matrix as the plain golden
 diff -u "testdata/expected/ssDNA.prok.8.blastn.sim.matrix" "$TEST_TMP/gz/result/all.sim.matrix" \
 	|| fail "gzip input: sim.matrix differs from plain golden"
 
 # ----- 2D mode ------------------------------------------------------------------
 step "2D mode (query x input)"
-./ViPTreeGen --notree --2D testdata/1.fasta --ncpus "$NCPUS" testdata/2.fasta "$TEST_TMP/2D"
+./viptreegen --notree --2D testdata/1.fasta --ncpus "$NCPUS" testdata/2.fasta "$TEST_TMP/2D"
 test -f "$TEST_TMP/2D/result/2D.sim.matrix" || fail "2D: result/2D.sim.matrix missing"
 test -f "$TEST_TMP/2D/result/top10.sim.list" || fail "2D: result/top10.sim.list missing"
 
@@ -102,8 +102,8 @@ test -f "$TEST_TMP/2D/result/top10.sim.list" || fail "2D: result/top10.sim.list 
 step "with-reference mode (build ref + reuse)"
 # split testdata/1.fasta into ref (first 10) + input (last 5)
 awk 'BEGIN{n=0} /^>/{n++} { if (n<=10) print > "'"$TEST_TMP"'/ref.fasta"; else print > "'"$TEST_TMP"'/input.fasta" }' testdata/1.fasta
-./ViPTreeGen --notree --ncpus "$NCPUS" "$TEST_TMP/ref.fasta" "$TEST_TMP/ref_run"
-./ViPTreeGen --notree --ncpus "$NCPUS" --ref-duckdb "$TEST_TMP/ref_run/run.duckdb" "$TEST_TMP/input.fasta" "$TEST_TMP/ref_use"
+./viptreegen --notree --ncpus "$NCPUS" "$TEST_TMP/ref.fasta" "$TEST_TMP/ref_run"
+./viptreegen --notree --ncpus "$NCPUS" --ref-duckdb "$TEST_TMP/ref_run/run.duckdb" "$TEST_TMP/input.fasta" "$TEST_TMP/ref_use"
 test -f "$TEST_TMP/ref_use/result/all.sim.matrix" || fail "ref mode: result/all.sim.matrix missing"
 # matrix must be 15x15 (10 ref + 5 input) = 16 lines (header + 15 ids)
 rows=$(wc -l < "$TEST_TMP/ref_use/result/all.sim.matrix")
@@ -116,7 +116,7 @@ rows=$(wc -l < "$TEST_TMP/ref_use/result/all.sim.matrix")
 step "mmseqs-tblastx chunking: chunk_size=3 (-> 3 chunks) matches default golden"
 CHUNK_DIR="$TEST_TMP/chunk3"
 rm -rf "$CHUNK_DIR"
-./ViPTreeGen --notree --ncpus "$NCPUS" --mmseqs-tblastx-chunk-size 3 \
+./viptreegen --notree --ncpus "$NCPUS" --mmseqs-tblastx-chunk-size 3 \
              testdata/ssDNA.prok.8.fasta "$CHUNK_DIR"
 diff -u testdata/expected/ssDNA.prok.8.mmseqs-tblastx.sim.matrix \
         "$CHUNK_DIR/result/all.sim.matrix" \
@@ -129,7 +129,7 @@ chunks=$(duckdb -noheader -list "$CHUNK_DIR/run.duckdb" \
 step "mmseqs-tblastx chunking: chunk_size=0 (disable) matches default golden"
 NO_CHUNK_DIR="$TEST_TMP/nochunk"
 rm -rf "$NO_CHUNK_DIR"
-./ViPTreeGen --notree --ncpus "$NCPUS" --mmseqs-tblastx-chunk-size 0 \
+./viptreegen --notree --ncpus "$NCPUS" --mmseqs-tblastx-chunk-size 0 \
              testdata/ssDNA.prok.8.fasta "$NO_CHUNK_DIR"
 diff -u testdata/expected/ssDNA.prok.8.mmseqs-tblastx.sim.matrix \
         "$NO_CHUNK_DIR/result/all.sim.matrix" \
@@ -141,18 +141,18 @@ diff -u testdata/expected/ssDNA.prok.8.mmseqs-tblastx.sim.matrix \
 step "--resume: re-run from a partial state, expect bit-exact final matrix"
 RESUME_DIR="$TEST_TMP/resume_test"
 rm -rf "$RESUME_DIR"
-./ViPTreeGen --notree --ncpus "$NCPUS" --mode tblastx testdata/ssDNA.prok.8.fasta "$RESUME_DIR"
+./viptreegen --notree --ncpus "$NCPUS" --mode tblastx testdata/ssDNA.prok.8.fasta "$RESUME_DIR"
 # Remove the final step's step_done marker AND the final matrix to force re-run of 03-1.
 duckdb "$RESUME_DIR/run.duckdb" \
 	"DELETE FROM run_metadata WHERE key = 'step_done:03-1.make_matrix'"
 rm -f "$RESUME_DIR/result/all.sim.matrix" "$RESUME_DIR/result/all.dist.matrix"
-./ViPTreeGen --resume --notree --ncpus "$NCPUS" --mode tblastx testdata/ssDNA.prok.8.fasta "$RESUME_DIR"
+./viptreegen --resume --notree --ncpus "$NCPUS" --mode tblastx testdata/ssDNA.prok.8.fasta "$RESUME_DIR"
 # After resume the final matrix should match the golden bit-exact.
 diff -u testdata/expected/ssDNA.prok.8.tblastx.sim.matrix "$RESUME_DIR/result/all.sim.matrix" \
 	|| fail "--resume final matrix differs from golden"
 
 step "--resume: rejects parameter change vs prior run"
-if ./ViPTreeGen --resume --notree --mode mmseqs-tblastx --ncpus "$NCPUS" \
+if ./viptreegen --resume --notree --mode mmseqs-tblastx --ncpus "$NCPUS" \
                 testdata/ssDNA.prok.8.fasta "$RESUME_DIR" 2>/dev/null; then
 	fail "--resume should reject differing --mode (prev=tblastx, current=mmseqs-tblastx)"
 fi
@@ -168,32 +168,32 @@ echo "$batch_line" | grep -q -- '-out .*\.tmp .*&& mv .*\.tmp' \
 # run), and produce a matrix that still matches the tblastx golden bit-exact.
 BATCH_DIR="$TEST_TMP/batch_resume"
 rm -rf "$BATCH_DIR"
-./ViPTreeGen --notree --ncpus "$NCPUS" --mode tblastx testdata/ssDNA.prok.8.fasta "$BATCH_DIR"
+./viptreegen --notree --ncpus "$NCPUS" --mode tblastx testdata/ssDNA.prok.8.fasta "$BATCH_DIR"
 duckdb "$BATCH_DIR/run.duckdb" \
 	"DELETE FROM run_metadata WHERE key LIKE 'step_done:01-2.%' \
 	  OR key LIKE 'step_done:02-%' OR key LIKE 'step_done:03-%'"
-log=$(./ViPTreeGen --resume --notree --ncpus "$NCPUS" --mode tblastx testdata/ssDNA.prok.8.fasta "$BATCH_DIR" 2>&1)
+log=$(./viptreegen --resume --notree --ncpus "$NCPUS" --mode tblastx testdata/ssDNA.prok.8.fasta "$BATCH_DIR" 2>&1)
 echo "$log" | grep -q "batch entries already done" \
 	|| fail "expected resume to print '… batch entries already done, … to (re-)run' (log: $(echo \"$log\" | tail -5))"
 diff -u testdata/expected/ssDNA.prok.8.tblastx.sim.matrix "$BATCH_DIR/result/all.sim.matrix" \
 	|| fail "batch-resume matrix differs from golden"
 
 step "--resume: rejects when output dir does not exist"
-if ./ViPTreeGen --resume --notree --mode tblastx --ncpus "$NCPUS" \
+if ./viptreegen --resume --notree --mode tblastx --ncpus "$NCPUS" \
                 testdata/ssDNA.prok.8.fasta "$TEST_TMP/nonexistent_resume_dir" 2>/dev/null; then
 	fail "--resume should reject when output dir does not exist"
 fi
 
 # ----- validation: invalid --mode rejected --------------------------------------
 step "reject invalid --mode (mmseqs-blastn was removed; see doc/mmseqs-blastn.md)"
-if ./ViPTreeGen --notree --mode mmseqs-blastn testdata/ssDNA.prok.8.fasta "$TEST_TMP/should_fail_a" 2>/dev/null; then
+if ./viptreegen --notree --mode mmseqs-blastn testdata/ssDNA.prok.8.fasta "$TEST_TMP/should_fail_a" 2>/dev/null; then
 	fail "--mode mmseqs-blastn should have been rejected"
 fi
 
 # ----- validation: --2D + --ref-duckdb mutex ------------------------------------
 step "reject conflicting --2D + --ref-duckdb"
 touch "$TEST_TMP/dummy.duckdb"
-if ./ViPTreeGen --notree --2D testdata/1.fasta --ref-duckdb "$TEST_TMP/dummy.duckdb" \
+if ./viptreegen --notree --2D testdata/1.fasta --ref-duckdb "$TEST_TMP/dummy.duckdb" \
                 testdata/2.fasta "$TEST_TMP/should_fail_b" 2>/dev/null; then
 	fail "--2D + --ref-duckdb conflict should have been rejected"
 fi
@@ -212,7 +212,7 @@ if [ -n "$SKIP_TREE" ]; then
 	step "tree generation: SKIPPED (SKIP_TREE=$SKIP_TREE)"
 else
 	step "tree generation (exercises R + ape + phangorn)"
-	./ViPTreeGen --ncpus "$NCPUS" --mode mmseqs-tblastx testdata/ssDNA.prok.8.fasta "$TEST_TMP/tree"
+	./viptreegen --ncpus "$NCPUS" --mode mmseqs-tblastx testdata/ssDNA.prok.8.fasta "$TEST_TMP/tree"
 	test -f "$TEST_TMP/tree/result/all.sim.matrix" || fail "tree: result/all.sim.matrix missing"
 	newicks=$(ls "$TEST_TMP/tree/result/"*.newick 2>/dev/null | wc -l)
 	[ "$newicks" -gt 0 ] || fail "tree: no .newick file produced"

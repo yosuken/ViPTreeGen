@@ -30,7 +30,7 @@ mamba install -c bioconda viptreegen
 ```
 git clone https://github.com/yosuken/ViPTreeGen.git
 cd ViPTreeGen
-./ViPTreeGen --help
+./viptreegen --help
 ```
 
 ## requirements
@@ -48,16 +48,16 @@ cd ViPTreeGen
 ```
 conda install -c bioconda viptreegen
 ```
-The command is installed as `ViPTreeGen`; a lowercase `viptreegen` alias (matching the package name) is also provided, so either works.
+The command is `viptreegen` (matching the package name); a CamelCase `ViPTreeGen` alias is also provided for backward compatibility, so either works.
 
 ### from source
 ```
 git clone https://github.com/yosuken/ViPTreeGen.git
 cd ViPTreeGen
 cargo build --release --manifest-path rust/Cargo.toml
-./ViPTreeGen --help
+./viptreegen --help
 ```
-The bundled Rust binary is located at `rust/target/release/viptreegen-summary-pre`. The `ViPTreeGen` wrapper finds it via PATH, the `VIPTREEGEN_SUMMARY_PRE` env var, or this dev path.
+The bundled Rust binary is located at `rust/target/release/viptreegen-summary-pre`. The `viptreegen` wrapper finds it via PATH, the `VIPTREEGEN_SUMMARY_PRE` env var, or this dev path.
 
 ## usage 
 ```
@@ -77,7 +77,7 @@ If you compute many sequences (e.g. n > 100) or large sequences (e.g. NCLDV geno
 In those cases, use '--ncpus' for parallel computation.
 
 [usage]
-$ ViPTreeGen [options] <input fasta> <output dir>
+$ viptreegen [options] <input fasta> <output dir>
 
 - <input fasta> should be in nucleotide FASTA format and include at least 3 sequences.
   Gzip-compressed input is accepted (auto-detected; `.gz`, `.fasta.gz`, or plain).
