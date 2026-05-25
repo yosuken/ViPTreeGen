@@ -84,6 +84,14 @@ step "long-name normalization (exercises ParseFastaEntries)"
 ./ViPTreeGen --notree --ncpus "$NCPUS" testdata/ssDNA.prok.8.long_name.fasta "$TEST_TMP/longname"
 test -f "$TEST_TMP/longname/result/all.sim.matrix" || fail "longname: result/all.sim.matrix missing"
 
+# ----- gzip input ---------------------------------------------------------------
+step "gzip-compressed input (auto-detected by magic bytes)"
+gzip -c testdata/ssDNA.prok.8.fasta > "$TEST_TMP/ssDNA.prok.8.fasta.gz"
+./ViPTreeGen --notree --ncpus "$NCPUS" --mode blastn "$TEST_TMP/ssDNA.prok.8.fasta.gz" "$TEST_TMP/gz"
+# gz input must produce the exact same matrix as the plain golden
+diff -u "testdata/expected/ssDNA.prok.8.blastn.sim.matrix" "$TEST_TMP/gz/result/all.sim.matrix" \
+	|| fail "gzip input: sim.matrix differs from plain golden"
+
 # ----- 2D mode ------------------------------------------------------------------
 step "2D mode (query x input)"
 ./ViPTreeGen --notree --2D testdata/1.fasta --ncpus "$NCPUS" testdata/2.fasta "$TEST_TMP/2D"

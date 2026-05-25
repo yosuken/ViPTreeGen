@@ -61,6 +61,7 @@ In those cases, use '--ncpus' or '--queue' for parallel computating.
 $ ViPTreeGen [options] <input fasta> <output dir>
 
 - <input fasta> should be in nucleotide FASTA format and include at least 3 sequences.
+  Gzip-compressed input is accepted (auto-detected; `.gz`, `.fasta.gz`, or plain).
 - If sequence name (before the first space in the header line) includes a character other than
   alphabets, numbers, dot(.), hyphen(-), or underscore(_), it will be replaced with underscore.
 - <output dir> should not exist.

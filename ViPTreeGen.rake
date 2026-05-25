@@ -214,6 +214,19 @@ ParseFastaEntries = lambda do |fasta_str, fasname:, min_seqs: nil|
 	result
 end
 
+## Read a FASTA file, transparently decompressing gzip input.
+## Detection is by the gzip magic bytes (1f 8b), so a gzipped file is handled
+## regardless of its extension (.gz, .fasta.gz, or none).
+ReadFasta = lambda do |path|
+	magic = File.open(path, "rb") { |f| f.read(2) }
+	if magic && magic.bytes == [0x1f, 0x8b]
+		require "zlib"
+		Zlib::GzipReader.open(path) { |gz| gz.read }
+	else
+		IO.read(path)
+	end
+end
+
 IngestSequences = lambda do |labs_in_order, lab2seq, kind:, ord_offset: 0|
 	## bulk-insert into sequences table via tmp TSV. `seq` is the nucleotide
 	## string itself (no whitespace — ParseFastaEntries stripped it), so a 4-col
@@ -555,8 +568,8 @@ task "01-1.2D.prep_for_tblastx", ["step"] do |t, args|
 	InitDuckDB.call(mode: "2D")
 
 	## validate and make copy of input fasta
-	fasta_str_q = IO.read(Fin_q)
-	fasta_str_i = IO.read(Fin)
+	fasta_str_q = ReadFasta.call(Fin_q)
+	fasta_str_i = ReadFasta.call(Fin)
 
 	entries_q = ParseFastaEntries.call(fasta_str_q, fasname: "query FASTA file")
 	entries_i = ParseFastaEntries.call(fasta_str_i, fasname: "input FASTA file", min_seqs: 3)
@@ -722,7 +735,7 @@ task "01-1.ref.prep", ["step"] do |t, args|
 	end
 
 	## --- 2. parse input fasta ----------------------------------------------
-	input_fasta_str = IO.read(Fin)
+	input_fasta_str = ReadFasta.call(Fin)
 	input_entries   = ParseFastaEntries.call(input_fasta_str, fasname: "input FASTA file", min_seqs: 1)
 	input_labs      = input_entries.map(&:first)
 	input_lab2seq   = input_entries.to_h
@@ -847,7 +860,7 @@ task "01-1.prep_for_tblastx", ["step"] do |t, args|
 	## validate and make copy of input fasta
 	open(Flen, "w"){ |flen|
 		open(fa, "w"){ |fall|
-			fasta_str = IO.read(Fin)
+			fasta_str = ReadFasta.call(Fin)
 			entries   = ParseFastaEntries.call(fasta_str, fasname: "input FASTA file", min_seqs: 3)
 
 			entries.each{ |lab, seq|

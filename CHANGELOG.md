@@ -26,6 +26,13 @@ default search engine, schema, and on-disk output structure all change.
   pre-v2.0 numbers byte-for-byte.
 
 ### Added
+- **Gzip-compressed FASTA input** — `<input fasta>` and the `--2D` query file may
+  be gzipped. Detection is by the gzip magic bytes (`1f 8b`), so it works
+  regardless of extension (`.gz`, `.fasta.gz`, or none). No flag needed.
+- **Benchmark subsets under `testdata/benchmark/`** — four gzipped Virus-Host DB
+  taxon subsets (Begomovirus, Autographivirales, Orthoherpesviridae, Imitervirales)
+  spanning the genome-size regimes from `doc/engine-benchmark.md`. ~5 MB total;
+  see `testdata/benchmark/README.md` for provenance and sampling.
 - **`--mode {mmseqs-tblastx|tblastx|blastn|last}`** — search engine + algorithm choice.
   - `mmseqs-tblastx` (default): MMseqs2 `--search-type 4`, translated 6-frame protein
     alignment. ~10× faster than legacy tblastx on EVG (1811 viral genomes:
