@@ -28,9 +28,9 @@ jobs:
           environment-name: viptreegen-ci
           init-shell: bash
           create-args: >-
-            -c bioconda -c conda-forge
+            -c conda-forge -c bioconda
             blast=2.17.0
-            mmseqs2=13.45111
+            mmseqs2=18.8cc5c
             last=1650
             duckdb
             ruby
@@ -38,11 +38,13 @@ jobs:
             r-ape
             r-phangorn
             rust
-            gnu-parallel
-          # blast / mmseqs2 / last are pinned because testdata/expected/ golden matrices
-          # are bit-exact diffs that depend on the engine versions. Bump these together
-          # with the goldens (run test.sh locally, copy new outputs to
-          # testdata/expected/, commit).
+            parallel
+          # conda-forge must precede bioconda (Bioconda channel-priority rule), else
+          # the solve fails. blast / mmseqs2 / last are pinned because testdata/expected/
+          # golden matrices are bit-exact diffs that depend on the engine versions.
+          # Bump these together with the goldens (run test.sh locally in the same env,
+          # copy new outputs to testdata/expected/, commit). The conda GNU-parallel
+          # package is named `parallel` (not `gnu-parallel`).
 
       - name: Build bundled Rust binary
         run: cargo build --release --manifest-path rust/Cargo.toml

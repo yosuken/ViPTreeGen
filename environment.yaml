@@ -3,8 +3,9 @@ channels:
   - conda-forge
   - bioconda
 dependencies:
-  - blast >=2.9       # required only when --mode tblastx (default)
-  - mmseqs2 >=13      # required only when --mode mmseqs (translated all-vs-all)
+  - blast >=2.9       # required for --mode tblastx / blastn
+  - mmseqs2 >=13      # required for --mode mmseqs-tblastx (default; translated all-vs-all)
+  - last              # required for --mode last (nucleotide tree; DiGAlign backend)
   - ruby >=3.0
   - r-base >=3.0
   - r-ape
