@@ -19,7 +19,7 @@ ViPTreeGen has been developed as a part of [the ViPTree server project](http://w
 * MMseqs2 (when `--mode mmseqs-tblastx`, the default)
 * BLAST+ (when `--mode tblastx` or `--mode blastn`)
 * LAST (when `--mode last`)
-* Ruby (ver >=2.0; tested with 2.x/3.x/4.x)
+* Ruby (ver >=3.0; tested with 3.x/4.x)
 * R (ver >=3.0)
 * DuckDB CLI (ver >=1.0) -- aggregates run state into `${outdir}/run.duckdb`
 * `viptreegen-summary-pre` -- bundled Rust binary (new in v2.0.0). Installed automatically by Bioconda; for source builds run `cargo build --release --manifest-path rust/Cargo.toml`
