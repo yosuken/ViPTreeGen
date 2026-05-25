@@ -1,0 +1,43 @@
+
+### bundle related files
+/vendor/*
+/.bundle/*
+# Gemfile.lock
+
+/.filenum/
+
+### "old" directory
+*/old/
+
+### file cache
+*.swp
+*~
+.nfs*
+
+### ad-hoc test output directories (e.g. /test_v2/, /test_run/) -- but DO track
+### /testdata/ (committed reference inputs + golden outputs) and /test.sh
+### (the smoke-test script CI delegates to).
+/test*
+!/testdata/
+!/test.sh
+
+### Rust build artifacts (new in v2.0.0)
+rust/target/
+
+### Bench / output directories created during development testing
+/bench_*/
+/bench_*.log
+/bench_*_job.sh
+/bench_*.qsub.out
+/bench_*.qsub.err
+
+### Bioconda build artifacts
+/THIRDPARTY.yml
+/bld/
+/build/
+
+### Editor / IDE
+.idea/
+.vscode/
+*.iml
+.DS_Store

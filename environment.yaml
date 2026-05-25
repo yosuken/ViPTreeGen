@@ -1,11 +1,15 @@
 name: viptreegen
 channels:
-  - bioconda
   - conda-forge
+  - bioconda
 dependencies:
-  - blast >=2.9
-  - ruby >=2.0
+  - blast >=2.9       # required for --mode tblastx / blastn
+  - mmseqs2 >=13      # required for --mode mmseqs-tblastx (default; translated all-vs-all)
+  - last              # required for --mode last (nucleotide tree; DiGAlign backend)
+  - ruby >=3.0
   - r-base >=3.0
   - r-ape
   - r-phangorn
   - parallel
+  - duckdb-cli >=1.0  # the `duckdb` CLI used to aggregate run state into ${outdir}/run.duckdb (the `duckdb` conda package is the library only, no CLI)
+  - rust          # build-time only: needed to compile the bundled viptreegen-summary-pre binary from a source clone (not a runtime dep; skip if installed via Bioconda)
