@@ -30,6 +30,7 @@ ViPTreeGen has been developed as a part of [the ViPTree server project](http://w
 ```
 conda install -c bioconda viptreegen
 ```
+The command is installed as `ViPTreeGen`; a lowercase `viptreegen` alias (matching the package name) is also provided, so either works.
 
 ### from source
 ```
