@@ -53,7 +53,7 @@ requirements:
     - r-ape
     - r-phangorn
     - parallel
-    - duckdb >=1.0
+    - duckdb-cli >=1.0   # the `duckdb` CLI (the `duckdb` conda package is the library only, no CLI binary)
 
 test:
   commands:

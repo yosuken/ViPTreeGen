@@ -11,5 +11,5 @@ dependencies:
   - r-ape
   - r-phangorn
   - parallel
-  - duckdb >=1.0  # CLI used to aggregate run state into ${outdir}/run.duckdb
+  - duckdb-cli >=1.0  # the `duckdb` CLI used to aggregate run state into ${outdir}/run.duckdb (the `duckdb` conda package is the library only, no CLI)
   - rust          # build-time only: needed to compile the bundled viptreegen-summary-pre binary from a source clone (not a runtime dep; skip if installed via Bioconda)
