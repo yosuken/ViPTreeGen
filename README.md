@@ -163,9 +163,9 @@ $ ViPTreeGen [options] <input fasta> <output dir>
 Four headline changes
 
 - **`--mode {mmseqs-tblastx|tblastx}`** — selectable proteomic-tree engine; `mmseqs-tblastx` is the new default (~10× faster than tblastx).
-- **Rust binary** — the legacy Ruby steps are fused into one parallel `viptreegen-summary-pre`.
-- **`--mode {blastn|last}`** — nucleotide-tree modes for the **DiGAlign** backend (a nucleotide tree, NOT a proteomic tree) (see [`doc/engine-benchmark.md`](doc/engine-benchmark.md)).
+- **Rust binary** — the legacy Ruby steps are fused into one binary `viptreegen-summary-pre`.
 - **`--ref-duckdb`** — with-reference mode: reuse a prior run's reference set so only input×input and input×ref are recomputed.
+- **`--mode {blastn|last}`** — nucleotide-tree modes for the **DiGAlign** backend (a nucleotide tree, NOT a proteomic tree) (see [`doc/engine-benchmark.md`](doc/engine-benchmark.md)).
 
 Full details — benchmarks, per-mode comparison tables, and the with-reference workflow — are in [`doc/v2.0.0_update.md`](doc/v2.0.0_update.md) (the complete itemized list is in [`CHANGELOG.md`](CHANGELOG.md)).
 
