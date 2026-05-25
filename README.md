@@ -69,7 +69,7 @@ $ ViPTreeGen [options] <input fasta> <output dir>
 [dependencies]
     - tblastx                 -- included in the BLAST+ program;
                                  https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download
-    - ruby (ver >=2.0)
+    - ruby (ver >=3.0)
     - duckdb (>=1.0)          -- CLI; aggregates run state into ${outdir}/run.duckdb
     - viptreegen-summary-pre  -- bundled Rust binary; new in v2.0.0
 

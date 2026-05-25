@@ -40,7 +40,7 @@ requirements:
   run:
     - blast >=2.9        # required only when --mode tblastx (default)
     - mmseqs2 >=13       # required only when --mode mmseqs (translated all-vs-all, ~10x faster)
-    - ruby >=2.0
+    - ruby >=3.0
     - r-base >=3.0
     - r-ape
     - r-phangorn

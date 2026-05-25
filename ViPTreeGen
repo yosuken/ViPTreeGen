@@ -96,7 +96,7 @@ class ViPTreeGen
                                      https://github.com/soedinglab/MMseqs2
         - tblastx / blastn        -- in NCBI BLAST+ (required for --mode tblastx or --mode blastn);
                                      https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download
-        - ruby (ver >=2.0)        -- orchestration; tested with 2.x/3.x/4.x
+        - ruby (ver >=3.0)        -- orchestration; tested with 3.x/4.x
         - duckdb (>=1.0)          -- CLI; used to aggregate run state into ${outdir}/run.duckdb
         - viptreegen-summary-pre  -- bundled Rust binary; replaces the 01-3/02-1/02-2/02-3 Ruby+SQL path (new in v2.0.0).
                                      Installed by Bioconda. For source builds, run 'cargo build --release --manifest-path rust/Cargo.toml'.
@@ -351,8 +351,8 @@ class ViPTreeGen
       check_r_pkg("phangorn")
     end
 
-    if Gem::Version.new(RUBY_VERSION) < Gem::Version.new("2.0.0")
-      $stderr.puts "#{ERRMSG} ruby (version >=2.0) is required"
+    if Gem::Version.new(RUBY_VERSION) < Gem::Version.new("3.0.0")
+      $stderr.puts "#{ERRMSG} ruby (version >=3.0) is required"
       exit 1
     end
 

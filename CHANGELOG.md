@@ -107,6 +107,7 @@ default search engine, schema, and on-disk output structure all change.
   comparison for `--mode tblastx`, and tree generation.
 
 ### Changed
+- **Minimum Ruby bumped to 3.0** (was 2.0). The CLI now rejects Ruby < 3.0.
 - **FASTA label normalization** (replace non-`[A-Za-z0-9.\-_]` with `_`, strip
   leading/trailing dots, collapse consecutive separators) is now factored into
   a single `ParseFastaEntries` lambda used by 01-1 / 01-1.2D / 01-1.ref.prep.

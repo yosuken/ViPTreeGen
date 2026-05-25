@@ -13,7 +13,7 @@
 #   - tblastx, blastn, makeblastdb  (BLAST+; 'module load blast+' on JAMSTEC HPC)
 #   - mmseqs                        ('module load mmseqs2')
 #   - duckdb CLI
-#   - ruby (>= 2.0), gnu parallel
+#   - ruby (>= 3.0), gnu parallel
 #   - R + 'ape' + 'phangorn'        (only when SKIP_TREE is unset)
 #   - rust/target/release/viptreegen-summary-pre  (build with `cargo build --release --manifest-path rust/Cargo.toml`)
 #
