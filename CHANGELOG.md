@@ -31,7 +31,7 @@ default search engine, schema, and on-disk output structure all change.
   (engine binaries, `duckdb`, `parallel`, `R`, `ruby`, and the bundled
   `viptreegen-summary-pre`), selected mode-aware. `run_metadata` additionally
   stores the full `command_line` and every effective option (idt, aalen, ncpus,
-  queue, wtime, notree, resume, mmseqs split/chunk sizes, 2D query path), so a
+  notree, resume, mmseqs split/chunk sizes, 2D query path), so a
   finished `run.duckdb` fully captures how it was produced.
   `viptreegen-summary-pre` gained a `--version` flag for this.
 - **Gzip-compressed FASTA input** — `<input fasta>` and the `--2D` query file may
@@ -63,7 +63,7 @@ default search engine, schema, and on-disk output structure all change.
   completed steps. Parameter integrity (mode, matrix, evalue, schema_version,
   ref-duckdb path, …) is verified against the prior run and `--resume` is
   rejected on any mismatch. Useful when a long `mmseqs search` or `tblastx`
-  step is killed by OOM / qsub time limit -- restart with the same arguments
+  step is killed by OOM / a time limit -- restart with the same arguments
   plus `--resume` and the pipeline continues from where it stopped.
   In `--mode tblastx` / `--mode blastn`, `--resume` is also batch-level: 01-2
   filters out batch lines whose `-out FILE` already exists, so partially-
@@ -124,6 +124,10 @@ default search engine, schema, and on-disk output structure all change.
   at exact-half boundaries (rare in practice).
 
 ### Removed
+- **`--queue` / `--wtime`** (ICR supercomputer `qsub` batch-submission path) removed.
+  Parallelism is now via `--ncpus` only (GNU parallel for tblastx/blastn, internal
+  engine threads for mmseqs-tblastx/last). For a scheduler, wrap the whole `ViPTreeGen`
+  invocation in your own job script.
 - `--mode mmseqs-blastn` was evaluated and dropped. mmseqs nucleotide search
   (`--search-type 3`) at our typical input size was ~9× slower than `blastn`,
   used ~80× more RAM, and was ~16% less sensitive (Pearson r ≈ 0.70 vs blastn).

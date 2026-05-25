@@ -52,8 +52,6 @@ class ViPTreeGen
 
       # computation
       ncpus:   nil,
-      queue:   nil,
-      wtime:   "24:00:00",
 
       # resume a previously-failed run (output dir must already exist)
       resume:  false,
@@ -82,7 +80,7 @@ class ViPTreeGen
     though genome fragments are also acceptable.
 
     If you compute many sequences (e.g. n > 100) or large sequences (e.g. NCLDV genomes), it may take a long time.
-    In those cases, use '--ncpus' or '--queue' for parallel computating.
+    In those cases, use '--ncpus' for parallel computation.
 
     \e[1;32m[usage]\e[0m
     $ #{@progname} [options] <input fasta> <output dir>
@@ -177,17 +175,18 @@ class ViPTreeGen
                                                            (ref ∪ input). Requires schema_version >= 2.0 (i.e., reference
                                                            was generated with ViPTreeGen v2.0+). Mutually exclusive with --2D.
 
-      (use GNU parallel)
-        --ncpus        [int]                            -- number of jobs in parallel
-
-      (for icr user)                                    -- for computation in the ICR supercomputer system
-        --queue        [JP1]                            -- queue for computation
+      (parallelization)
+        --ncpus        [int]                            -- number of CPUs to use for the all-vs-all computation.
+                                                           In --mode tblastx/blastn: number of per-query search jobs run
+                                                           in parallel via GNU parallel. In --mode mmseqs-tblastx/last:
+                                                           the search engine's internal thread count.
 
     \e[1;32m[output files]\e[0m
       (normal mode)
         result/all.sim.matrix              -- similarity (SG score) matrix
         result/all.dist.matrix             -- distance (1-SG score) matrix
-        result/all.[bio]nj.[a|de]sc.newick -- Newick files of the viral proteomic tree, midpoint rooted and ladderized
+        result/all.[bio]nj.[a|de]sc.newick -- Newick trees, midpoint rooted and ladderized (a proteomic tree in
+                                              --mode tblastx / mmseqs-tblastx; a nucleotide tree in --mode blastn / last)
 
       (2D mode)
         result/2D.sim.matrix               -- similarity (SG score) matrix (row-wise: query fasta, column-wise: input fasta)
@@ -195,8 +194,8 @@ class ViPTreeGen
 
       (aggregated state)
         run.duckdb                         -- single DuckDB file: summary_pre (per-pair raw stats), self_scores, summary_tsv,
-                                              sequences, run_metadata, logs (tblastx + makeblastdb).
-                                              Inspect with `duckdb run.duckdb`. Per-node tblastx.out files are deleted after the
+                                              sequences, run_metadata, tools (path/version of tools used), logs.
+                                              Inspect with `duckdb run.duckdb`. Per-node search output files are deleted after the
                                               Rust binary (viptreegen-summary-pre) consumes them into summary_pre.
     EOF
   end
@@ -248,8 +247,6 @@ class ViPTreeGen
 
       ## computation
       opts.on("--ncpus INT")                { |v| @options[:ncpus] = v }
-      opts.on("--queue QUEUE")              { |v| @options[:queue] = v }
-      opts.on("--wtime TIME")               { |v| @options[:wtime] = v }
 
       ## resume a previously-interrupted run
       opts.on("--resume",
@@ -369,7 +366,11 @@ class ViPTreeGen
       exit 1
     end
 
-    check_cmd("parallel", "GNU parallel; required when --ncpus is set") if @options[:ncpus]
+    # GNU parallel is only used by the per-(query,split) BLAST+ batch path (tblastx/blastn);
+    # mmseqs-tblastx / last parallelize internally via their own --threads, no parallel needed.
+    if @options[:ncpus] && %w[tblastx blastn].include?(@options[:mode])
+      check_cmd("parallel", "GNU parallel; required for --mode tblastx/blastn with --ncpus")
+    end
   end
 
   def check_cmd(cmd, hint)
@@ -500,9 +501,7 @@ class ViPTreeGen
       "ref_duckdb"                => @options[:ref_duckdb].to_s,
       "resume"                    => @options[:resume] ? "true" : "",
       "method"                    => @options[:method],
-      "queue"                     => @options[:queue].to_s,
       "ncpus"                     => @options[:ncpus].to_s,
-      "wtime"                     => @options[:wtime],
       "notree"                    => @options[:notree] ? "true" : "",
       "incmd"                     => @incmd,
       "tools_json"                => collect_tools.to_json,

@@ -19,13 +19,9 @@ WriteBatch  = lambda do |outs, jdir, t|
 	}
 end
 
-RunBatch    = lambda do |jdir, queue, nthreads, mem, wtime, ncpus|
-	# [TODO] queue validation
+RunBatch    = lambda do |jdir, ncpus|
 	Dir["#{jdir}/*"].sort_by{ |fin| fin.split(".")[-1].to_i }.each{ |fin|
-		if queue != ""
-			raise("`--queue #{queue}': invalid queue") unless %w|JP1 JP4 JP10 cdb|.include?(queue)
-			sh "qsubarraywww -q #{queue} -l ncpus=#{nthreads} -l mem=#{mem}gb -l walltime=#{wtime} #{fin}"
-		elsif ncpus != ""
+		if ncpus != ""
 			raise("`--ncpus #{ncpus}': not an integer") if ncpus !~ /^\d+$/
 			sh "parallel --jobs #{ncpus} <#{fin}"
 		else
@@ -115,8 +111,6 @@ InitDuckDB = lambda do |mode:|
 		["idt",                       ENV["idt"].to_s],
 		["aalen",                     ENV["aalen"].to_s],
 		["ncpus",                     ENV["ncpus"].to_s],
-		["queue",                     ENV["queue"].to_s],
-		["wtime",                     ENV["wtime"].to_s],
 		["notree",                    (ENV["notree"].to_s == "true").to_s],
 		["resume",                    Resume.to_s],
 		["mmseqs_split_memory_limit", ENV["mmseqs_split_memory_limit"].to_s],
@@ -286,7 +280,7 @@ end
 ##
 ## Robustness for --resume:
 ## The command writes to "<out>.tmp" first and `mv`s to "<out>" only on a zero exit
-## status from tblastx/blastn. If the search is killed mid-write (qsub time limit,
+## status from tblastx/blastn. If the search is killed mid-write (time limit,
 ## OOM, manual signal), the `.tmp` file remains but "<out>" never appears -- so on
 ## --resume the batch-level filter in 01-2 sees that "<out>" is absent and re-runs
 ## that batch. Without this guard a SIGKILL'd run leaves a truncated `<out>` that
@@ -465,9 +459,6 @@ task :default do
 	## own two-search flow.
 	MmseqsChunkSize = (ENV["mmseqs_tblastx_chunk_size"].to_s.empty? ? 1000 : ENV["mmseqs_tblastx_chunk_size"].to_i)
 	Nthreads = "1".to_i
-	Mem      = Nthreads * 12
-	Qname    = ENV["queue"]||""
-	Wtime    = ENV["wtime"]||"24:00:00"
 	Ncpus    = ENV["ncpus"]||""
 
 	## Effectively "report all hits above the e-value threshold". Set far above any plausible
@@ -970,7 +961,7 @@ task "01-2.tblastx", ["step"] do |t, args|
 		jdir = "#{Odir}/batch/01-1" # output from 01-1
 		## --resume support: SearchCmd writes "<out>.tmp" then `mv`s to "<out>", so a
 		## present "<out>" file means a previous run finished that batch line cleanly.
-		## Filter such lines out of the batch files so RunBatch (GNU parallel / qsub)
+		## Filter such lines out of the batch files so RunBatch (GNU parallel / serial)
 		## only redoes what was killed or never started.
 		if Resume
 			skipped = 0; kept = 0
@@ -992,7 +983,7 @@ task "01-2.tblastx", ["step"] do |t, args|
 			end
 			puts "\e[1;36m### resume: #{skipped} tblastx/blastn batch entries already done, #{kept} to (re-)run\e[0m"
 		end
-		RunBatch.call(jdir, Qname, Nthreads, Mem, Wtime, Ncpus)
+		RunBatch.call(jdir, Ncpus)
 
 	when "last"
 		## LAST nucleotide-vs-nucleotide. One global `lastal` call against the lastdb built in
